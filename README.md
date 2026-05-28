@@ -5,7 +5,7 @@ Personal CV — single static HTML page.
 ## Stack
 
 Plain HTML + CSS + JS. No build step, no dependencies.
-
+Hosting from https://my.ionos.co.uk/
 
 ## Files
 
