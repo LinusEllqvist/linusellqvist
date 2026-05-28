@@ -127,6 +127,65 @@
   .page{
     position:relative;z-index:1;
     max-width:1180px;margin:0 auto;padding:42px 56px 56px;
+    display:none;
+  }
+  body.unlocked .page{display:block}
+
+  /* ===== SECURITY GATE ===== */
+  .gate{
+    position:fixed;inset:0;z-index:300;
+    display:flex;align-items:center;justify-content:center;padding:24px;
+    background:
+      radial-gradient(1000px 500px at 80% -10%, rgba(145,214,172,0.10), transparent 60%),
+      radial-gradient(800px 400px at -10% 110%, rgba(0,169,224,0.08), transparent 60%),
+      var(--bg);
+  }
+  body.unlocked .gate{display:none}
+  .gate-card{
+    width:100%;max-width:390px;
+    border:1px solid var(--hairline);background:var(--surface);
+    backdrop-filter:blur(6px);padding:32px 30px;border-radius:4px;
+  }
+  .gate-label{
+    font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.22em;
+    color:var(--accent);text-transform:uppercase;margin-bottom:16px;
+    display:inline-flex;align-items:center;gap:10px;
+  }
+  .gate-label .bar{display:inline-block;width:28px;height:1px;background:var(--accent)}
+  .gate-title{
+    font-family:'Manrope',sans-serif;font-weight:800;font-size:26px;
+    letter-spacing:-.02em;color:var(--text);line-height:1.1;
+  }
+  .gate-sub{
+    font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.06em;
+    color:var(--muted);margin-top:8px;margin-bottom:22px;
+  }
+  #gate-form{display:flex;gap:8px}
+  .gate-input{
+    flex:1;min-width:0;
+    font-family:'JetBrains Mono',monospace;font-size:15px;letter-spacing:.3em;
+    padding:11px 13px;color:var(--text);
+    background:rgba(255,255,255,0.03);border:1px solid var(--hairline-hi);border-radius:3px;
+    outline:none;transition:border-color .2s ease;
+  }
+  .gate-input:focus{border-color:var(--accent)}
+  .gate-btn{
+    font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.2em;
+    text-transform:uppercase;font-weight:700;cursor:pointer;white-space:nowrap;
+    padding:11px 18px;color:#fff;background:var(--accent-2);
+    border:1px solid var(--accent-2);border-radius:3px;
+    transition:filter .2s ease;
+  }
+  .gate-btn:hover{filter:brightness(1.1)}
+  .gate-error{
+    font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.04em;
+    color:var(--warn);margin-top:14px;min-height:14px;
+  }
+  .gate-card.shake{animation:gateShake .4s}
+  @keyframes gateShake{
+    0%,100%{transform:translateX(0)}
+    20%,60%{transform:translateX(-7px)}
+    40%,80%{transform:translateX(7px)}
   }
 
   /* ===== TOP BAR ===== */
@@ -425,6 +484,7 @@
   /* ===== PRINT: fit on one A4 page ===== */
   @media print{
     @page{size:A4;margin:10mm}
+    .gate{display:none!important}
     body{background:#fff;color:#111;font-family:'Source Sans 3',sans-serif}
     body::before,body::after{display:none}
     .page{padding:0;max-width:none}
@@ -486,6 +546,21 @@
 </style>
 </head>
 <body>
+
+<!-- SECURITY GATE -->
+<div id="gate" class="gate" role="dialog" aria-modal="true" aria-labelledby="gate-title">
+  <div class="gate-card">
+    <div class="gate-label"><span class="bar"></span> Restricted</div>
+    <h2 id="gate-title" class="gate-title">Enter Security Code</h2>
+    <p class="gate-sub">// This curriculum vitae is access-protected.</p>
+    <form id="gate-form" autocomplete="off">
+      <input id="gate-input" class="gate-input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="12" aria-label="Security code" autocomplete="off" />
+      <button class="gate-btn" type="submit">Unlock</button>
+    </form>
+    <p id="gate-error" class="gate-error" role="alert" aria-live="polite"></p>
+  </div>
+</div>
+
 <div class="page">
 
   <!-- TOP BAR -->
@@ -501,7 +576,6 @@
   <!-- HERO -->
   <section class="hero">
     <div>
-      <div class="mono-label"><span class="bar"></span> Curriculum Vitae &nbsp;//&nbsp; Edition 2026</div>
       <h1 class="name" id="name">Linus <span class="italic">Ellqvist</span>.</h1>
       <div class="role">
         <span>IT Technician</span>
@@ -559,9 +633,9 @@
       <div class="sub">// 21 CFR Part 11</div>
     </div>
     <div class="stat">
-      <div class="k">Issues Closed</div>
-      <div class="v" data-tickets data-count="0">0<span class="unit">+</span></div>
-      <div class="sub">// and counting</div>
+      <div class="k">Supporting Sites</div>
+      <div class="v" data-count="2">0</div>
+      <div class="sub">// Matfors · Solna</div>
     </div>
     <div class="stat">
       <div class="k">Uptime Posture</div>
@@ -618,7 +692,7 @@
           <div class="body">Run <strong>vulnerability assessments, penetration testing, and phishing-awareness campaigns</strong> with simulated attacks and follow-up training.</div>
         </div>
         <div class="op">
-          <span class="tag dev">AI · DEV</span>
+          <span class="tag dev">DEV</span>
           <div class="body">Designed and shipped <strong>cross-department software, bots and automation</strong> on Copilot Studio, Azure AI Foundry, LLM integrations, and Azure Functions middleware. Quietly retiring manual workload across the company.</div>
         </div>
       </div>
@@ -688,18 +762,6 @@
     </div>
   </section>
 
-  <!-- FOOTER -->
-  <footer class="footer">
-    <div>
-      <div class="label">Location</div>
-      <div class="val">Matfors · Sundsvall <span class="accent">// SE</span></div>
-    </div>
-    <div>
-      <div class="label">Role</div>
-      <div class="val">IT Technician <span class="accent">@ NorthX Biologics</span></div>
-    </div>
-    <div class="signature">// Built, secured, automated. ✦</div>
-  </footer>
 </div>
 
 <script src="script.js" defer></script>

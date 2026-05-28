@@ -1,3 +1,52 @@
+  /* ====== Security gate ====== */
+  (function(){
+    // SHA-256 of the access code is stored here — the literal code is NOT in
+    // the source. Note: on a static site this only deters casual snooping; a
+    // short numeric code can still be brute-forced offline by a determined visitor.
+    const HASH = '8889f9aaec125c63f9258625ec3671410f6b2aaf4cacacace05dedf14c66e21c';
+    const KEY  = 'cv-unlocked';
+    const gate  = document.getElementById('gate');
+    const form  = document.getElementById('gate-form');
+    const input = document.getElementById('gate-input');
+    const card  = document.querySelector('.gate-card');
+    const errEl = document.getElementById('gate-error');
+    if(!gate || !form) return;
+
+    function unlock(){
+      document.body.classList.add('unlocked');
+      try{ sessionStorage.setItem(KEY,'1'); }catch(e){}
+    }
+
+    // Stay unlocked for the rest of this browser session.
+    try{ if(sessionStorage.getItem(KEY)==='1'){ unlock(); return; } }catch(e){}
+
+    async function sha256hex(str){
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+      return [...new Uint8Array(buf)].map(b=>b.toString(16).padStart(2,'0')).join('');
+    }
+
+    function fail(msg){
+      errEl.textContent = msg || '// Incorrect code. Try again.';
+      card.classList.remove('shake'); void card.offsetWidth; card.classList.add('shake');
+      input.value=''; input.focus();
+    }
+
+    form.addEventListener('submit', async function(e){
+      e.preventDefault();
+      const code = input.value.trim();
+      if(!code){ fail('// Enter the code.'); return; }
+      try{
+        const h = await sha256hex(code);
+        if(h === HASH){ errEl.textContent=''; input.value=''; unlock(); }
+        else fail();
+      }catch(err){
+        fail('// Unable to verify in this browser.');
+      }
+    });
+
+    setTimeout(()=>{ try{ input.focus(); }catch(e){} }, 50);
+  })();
+
   /* ====== Char-by-char name reveal ====== */
   (function(){
     const el = document.getElementById('name');
@@ -28,16 +77,6 @@
     document.querySelectorAll('#name .char').forEach((c,i)=>{
       c.style.animationDelay = (0.35 + i*0.035) + 's';
     });
-  })();
-
-  /* ====== Live tickets counter (baseline + per-day increment) ====== */
-  (function(){
-    const baseline = new Date('2026-05-28T00:00:00Z');
-    const start = 7430;
-    const perDay = 9;
-    const days = Math.max(0, Math.floor((Date.now() - baseline.getTime()) / 86400000));
-    const total = start + perDay * days;
-    document.querySelectorAll('[data-tickets]').forEach(el => { el.dataset.count = String(total); });
   })();
 
   /* ====== Counter animation ====== */
