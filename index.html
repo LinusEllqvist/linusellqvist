@@ -473,12 +473,14 @@
       </div>
       <div class="tagline-wrap">
         <div class="tagline active" data-view="work">
-          <p>IT Technician currently at <em>NorthX Biologics, Sweden's national innovation hub for advanced biologics</em> — keeping the systems behind cell &amp; gene therapy reliable, validated, and a little smarter every quarter. Infrastructure, security, automation, and the occasional controlled chaos.</p>
+          <p>IT Technician at <em>NorthX Biologics, Sweden's national innovation hub for advanced biologics</em>. Keeping the systems behind cell &amp; gene therapy reliable, validated, and a little smarter every quarter. Infrastructure, security, automation, and the occasional controlled chaos.</p>
+          <p>The HQ IT team is two people, which means the same hands work the firewall, the validated GxP systems, and the user who can't print. Nothing gets handed off, and nothing gets to hide.</p>
         </div>
         <div class="tagline" data-view="person">
-          <p>Calm and collected, with a problem-solving habit and a bias for finding the <em>opportunity</em> in something messy. I care about growth — owning hard problems, learning new domains, and making things measurably better.</p>
+          <p>Calm and collected, with a problem-solving habit and a bias for finding the <em>opportunity</em> in something messy. Growth is the part of the job I care about: owning hard problems, learning new domains, making things measurably better.</p>
           <p>Honest flaw: I deep-dive. I'll spend the extra hour chasing the root cause when a quick patch would do. Working on calling the trade-off out loud sooner.</p>
-          <p><em>Off the clock</em> — wife, two kids, and most evenings on the floor playing with them. I build games on the side, handle my own work around the house, and treat gardening as the analog reset between IT problems.</p>
+          <p><em>Off the clock</em>, wife and two kids. Most evenings end up on the floor with them, and I'm fine with that being the rhythm for now.</p>
+          <p>After bedtime, side projects. Small game builds, mostly to keep a hand in code outside of work and to scratch the design itch tickets don't reach. Same impulse pulls me into LLMs, the homelab, and whatever tool I haven't pulled apart yet. Every new system is just another thing to figure out from the inside.</p>
         </div>
       </div>
     </div>
@@ -506,9 +508,9 @@
       <div class="sub">// 21 CFR Part 11</div>
     </div>
     <div class="stat">
-      <div class="k">HQ IT Team</div>
-      <div class="v" data-count="2">0<span class="unit">PAX</span></div>
-      <div class="sub">// every hat</div>
+      <div class="k">Issues Closed</div>
+      <div class="v" data-tickets data-count="0">0<span class="unit">+</span></div>
+      <div class="sub">// and counting</div>
     </div>
     <div class="stat">
       <div class="k">Uptime Posture</div>
@@ -637,6 +639,16 @@
     document.querySelectorAll('#name .char').forEach((c,i)=>{
       c.style.animationDelay = (0.35 + i*0.035) + 's';
     });
+  })();
+
+  /* ====== Live tickets counter (baseline + per-day increment) ====== */
+  (function(){
+    const baseline = new Date('2026-05-28T00:00:00Z');
+    const start = 7430;
+    const perDay = 9;
+    const days = Math.max(0, Math.floor((Date.now() - baseline.getTime()) / 86400000));
+    const total = start + perDay * days;
+    document.querySelectorAll('[data-tickets]').forEach(el => { el.dataset.count = String(total); });
   })();
 
   /* ====== Counter animation ====== */
