@@ -171,6 +171,8 @@
   }
   .role .sep{color:var(--dim);margin:0 10px}
   .role .accent{color:var(--accent)}
+  .role a.accent{text-decoration:none;transition:color .2s ease}
+  .role a.accent:hover{color:var(--accent-2);text-decoration:underline;text-underline-offset:3px}
 
   .hats{
     margin-top:10px;
@@ -424,11 +426,9 @@
   <!-- TOP BAR -->
   <div class="topbar">
     <div class="left">
-      <span><span class="dot"></span> SYSTEM // ACTIVE</span>
-      <span>CV.LINUS.ELLQVIST</span>
+      <span>REV 2026.05</span>
     </div>
     <div class="right">
-      <span>REV 2026.05</span>
       <span>SE // Sundsvall</span>
     </div>
   </div>
@@ -440,8 +440,7 @@
       <h1 class="name" id="name">Linus <span class="italic">Ellqvist</span>.</h1>
       <div class="role">
         IT Technician <span class="sep">/</span>
-        <span class="accent">NorthX Biologics</span> <span class="sep">/</span>
-        CONTACT@LINUSELLQVIST.COM
+        <a class="accent" href="mailto:contact@linusellqvist.com">contact@linusellqvist.com</a>
       </div>
       <div class="hats">
         Sysadmin <span class="hat-sep">·</span> Network <span class="hat-sep">·</span> Security <span class="hat-sep">·</span> Automation <span class="hat-sep">·</span> Full-Stack Dev <span class="hat-sep">·</span> Systems Implementation
@@ -452,7 +451,7 @@
       </div>
       <div class="tagline-wrap">
         <div class="tagline active" data-view="work">
-          <p>IT Technician at <em>Sweden's national innovation hub for advanced biologics</em> — keeping the systems behind cell &amp; gene therapy reliable, validated, and a little smarter every quarter. Infrastructure, security, automation, and the occasional controlled chaos.</p>
+          <p>IT Technician currently at <em>NorthX Biologics, Sweden's national innovation hub for advanced biologics</em> — keeping the systems behind cell &amp; gene therapy reliable, validated, and a little smarter every quarter. Infrastructure, security, automation, and the occasional controlled chaos.</p>
         </div>
         <div class="tagline" data-view="person">
           <p>Calm and collected, with a problem-solving habit and a bias for finding the <em>opportunity</em> in something messy. I care about growth — owning hard problems, learning new domains, and making things measurably better.</p>
