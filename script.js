@@ -123,19 +123,13 @@
 
     function inGrid(x,y){ return x>=0 && y>=0 && x<cols && y<rows; }
 
-    // Adjacency over open cells, with wrap-around tunnels at the screen edges.
+    // Adjacency over open cells (4-directional, no screen wrapping).
     function buildGraph(cellset){
       const g = new Map();
       cellset.forEach(k=>{
         const [x,y] = k.split(',').map(Number);
         const nb = [];
-        DIRS.forEach(d=>{
-          let nx = x+d[0], ny = y+d[1];
-          if(nx<0) nx = cols-1; else if(nx>=cols) nx = 0;   // wrap left/right
-          if(ny<0) ny = rows-1; else if(ny>=rows) ny = 0;   // wrap top/bottom
-          const nk = key(nx,ny);
-          if(nk!==k && cellset.has(nk)) nb.push(nk);
-        });
+        DIRS.forEach(d=>{ const nk = key(x+d[0], y+d[1]); if(cellset.has(nk)) nb.push(nk); });
         g.set(k, nb);
       });
       return g;
@@ -163,12 +157,10 @@
     function buildMaze(){
       open = new Set();
       const noDot = new Set();
-      const lower = [];
       const add = (x,y,dot)=>{
         if(!inGrid(x,y)) return;
-        const k = key(x,y);
-        if(!open.has(k)){ open.add(k); lower.push([x,y]); }
-        if(dot===false) noDot.add(k);
+        open.add(key(x,y));
+        if(dot===false) noDot.add(key(x,y));
       };
 
       // 1) Pac-Man's opening run: a horizontal line just above the title.
@@ -179,33 +171,24 @@
       for(let x=startX; x<=endX; x++) add(x, rowT, x<=dotEnd);
       startCell = key(startX, rowT);
 
-      // 2) Past the blanks, the line turns straight down.
-      const branchBottom = Math.min(rows-2, rowT + 5 + (Math.random()*4|0));
-      for(let y=rowT; y<=branchBottom; y++) add(endX, y);
+      // 2) Right-hand spine: past the blanks the line turns down and runs the
+      //    full height. It's the ONLY join between the opening line and the
+      //    maze (nothing else sits on rowT+1), so the intro always plays.
+      for(let y=rowT; y<=rows-2; y++) add(endX, y);
 
-      // 3) The rest of the field lives BELOW the title row and joins the opening
-      //    line only through that single down-branch — so Pac-Man always runs
-      //    the line, crosses the gap, then drops into the maze.
-      lower.length = 0; lower.push([endX, branchBottom]);
-      const walks = Math.max(18, Math.floor((cols*rows)/55));
-      for(let w=0; w<walks; w++){
-        const [sx,sy] = lower[(Math.random()*lower.length)|0];
-        let x=sx, y=sy;
-        const d = DIRS[(Math.random()*4)|0];
-        const len = 4 + (Math.random()*8|0);
-        for(let i=0;i<len;i++){
-          x+=d[0]; y+=d[1];
-          if(!inGrid(x,y) || y <= rowT+1) break;        // keep clear of the line
-          const k = key(x,y);
-          if(!open.has(k)){ open.add(k); lower.push([x,y]); }
-        }
+      // 3) A grid of crossing corridors below the line → a real maze. Horizontals
+      //    always reach the spine on the right; verticals cross them. A few
+      //    segments are dropped and ends trimmed so it isn't perfect graph-paper.
+      const gap = 4, latTop = rowT + 2, latBottom = rows - 2;
+      for(let y=latTop; y<=latBottom; y+=gap){
+        if(y!==latTop && Math.random()<0.18) continue;
+        for(let x=startX; x<=endX; x++) add(x, y);
       }
-      // Full-width / full-height lines reach the edges, so the wrap tunnels let
-      // movers cross the screen; they also cross corridors to add loops/routes.
-      const hLines = 2 + (Math.random()*2|0);
-      for(let i=0;i<hLines;i++){ const yy = rowT+2 + (Math.random()*Math.max(1,rows-rowT-3)|0); for(let x=0;x<cols;x++){ const k=key(x,yy); if(!open.has(k)){ open.add(k); lower.push([x,yy]); } } }
-      const vLines = 1 + (Math.random()*2|0);
-      for(let i=0;i<vLines;i++){ const xx = 2 + (Math.random()*(cols-4)|0); for(let y=rowT+2; y<rows; y++){ const k=key(xx,y); if(!open.has(k)){ open.add(k); lower.push([xx,y]); } } }
+      for(let x=startX; x<=endX; x+=gap){
+        if(x!==startX && Math.random()<0.18) continue;
+        const y0 = latTop + (Math.random()*2|0), y1 = latBottom - (Math.random()*2|0);
+        for(let y=y0; y<=y1; y++) add(x, y);
+      }
 
       // Collapse to the connected field that contains Pac-Man's start.
       graph = buildGraph(open);
@@ -259,16 +242,7 @@
       }
       if(!step){ m.to = m.cell; m.t = 1; return; }
       const f = m.cell.split(',').map(Number), t = step.split(',').map(Number);
-      const dx = t[0]-f[0], dy = t[1]-f[1];
-      const wrapX = Math.abs(dx) > 1, wrapY = Math.abs(dy) > 1;
-      m.dir = [ wrapX ? -Math.sign(dx) : dx, wrapY ? -Math.sign(dy) : dy ];
-      if(wrapX || wrapY){
-        // Screen-edge tunnel: pop out the far side instead of sliding across.
-        m.cell = step; m.from = step; m.to = step; m.t = 1;
-        if(m===pac) eatDot(step);
-      } else {
-        m.from = m.cell; m.to = step; m.t = 0;
-      }
+      m.from = m.cell; m.to = step; m.t = 0; m.dir = [t[0]-f[0], t[1]-f[1]];
     }
 
     function arrive(m){
