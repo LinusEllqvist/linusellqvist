@@ -265,11 +265,48 @@
       if(d && !d.eaten){ d.eaten = true; d.fade = 0; d.respawnAt = performance.now() + 6000 + Math.random()*9000; }
     }
 
+    // Multi-source BFS distance field over the graph (0 at every source).
+    function field(sources){
+      const dist = new Map(); const q = [];
+      sources.forEach(s=>{ if(!dist.has(s)){ dist.set(s,0); q.push(s); } });
+      for(let h=0; h<q.length; h++){
+        const c = q[h], dc = dist.get(c);
+        for(const n of (graph.get(c)||[])){ if(!dist.has(n)){ dist.set(n, dc+1); q.push(n); } }
+      }
+      return dist;
+    }
+
+    // Pac-Man's "smart" move: head for dots when safe, but flee toward open
+    // junctions (away from ghosts) when one closes in. Scores each neighbour by
+    // distance-to-nearest-dot vs distance-to-nearest-ghost.
+    function pacNext(){
+      const nb = graph.get(pac.cell) || [];
+      if(!nb.length) return null;
+      const ghostCells = ghosts.filter(g=> g.fade>0.5 && !g.respawn).map(g=> g.cell);
+      const gd = ghostCells.length ? field(ghostCells) : null;            // dist to nearest ghost
+      const dotCells = []; dots.forEach((d,k)=>{ if(!d.eaten) dotCells.push(k); });
+      const dd = field(dotCells);                                         // dist to nearest dot
+      let best = nb[0], bestScore = -Infinity;
+      for(const n of nb){
+        const g = gd && gd.has(n) ? gd.get(n) : Infinity;
+        const d = dd.has(n) ? dd.get(n) : 50;
+        let score = -d;                                 // baseline: get closer to a dot
+        if(g <= 1)        score = -1e6;                 // never step onto a ghost
+        else if(g <= 5){                                // threatened: prioritise survival
+          score += g * 3.5;                             // climb the safety gradient
+          score += (graph.get(n).length) * 1.5;         // prefer junctions to dead-ends
+          score -= (6 - g) * 4;                         // the closer the ghost, the more urgent
+        }
+        if(n === pac.from) score -= 0.6;                // small anti-jitter (avoid pointless reversing)
+        if(score > bestScore){ bestScore = score; best = n; }
+      }
+      return best;
+    }
+
     function chooseNext(m){
       let step = null;
       if(m===pac){
-        step = bfsStep(pac.cell, c=>{ const d = dots.get(c); return d && !d.eaten; });
-        if(!step){ const nb = graph.get(pac.cell); step = nb.length ? nb[(Math.random()*nb.length)|0] : null; }
+        step = pacNext();
       } else {
         step = bfsStep(m.cell, c=> c===pac.cell);
       }
