@@ -528,15 +528,14 @@
     h1.name .italic{color:#00A9E0}
     .tagline{color:#444;font-size:13px}
     .view-toggle{display:none!important}
-    /* Always print the full resume, regardless of the active on-screen view */
+    /* Print EVERYTHING in one document: person, work and portfolio. */
     .stats{display:grid!important}
     .main{display:grid!important}
     .background-section,.stack-section{display:block!important}
-    .portfolio-section{display:none!important}
+    .portfolio-section{display:block!important;margin-top:14px}
     #pac-canvas{display:none!important}
     .tagline-wrap{margin-top:6px}
-    .tagline[data-view="person"]{display:none!important}
-    .tagline[data-view="work"]{display:block!important}
+    .tagline{display:block!important;margin-bottom:6px}
     .tagline p{margin-bottom:0}
     .helix{display:none}
     .stats{background:none;border-color:#999;margin:10px 0}
@@ -578,6 +577,13 @@
     .chip.hidden{display:inline-block!important}
     .chip.highlighted{border-color:#00A9E0!important;color:#012169!important;background:none!important;font-weight:700!important;box-shadow:none!important}
     .stack-empty{display:none!important}
+    .portfolio-grid{grid-template-columns:1fr 1fr;gap:10px}
+    .project-card{border-color:#ccc;background:none!important;padding:8px 10px;transform:none!important}
+    .project-title{font-size:12px;color:#111}
+    .project-status{background:#034638!important;color:#fff!important;font-size:8px;padding:2px 5px}
+    .project-desc{font-size:10px;color:#333}
+    .project-stack .ptag{font-size:9px;border-color:#bbb;color:#222;background:none}
+    .project-link{color:#012169!important;font-size:9px}
     .footer{margin-top:14px;padding-top:8px;border-color:#ccc}
     .footer .val{color:#111}
     *{animation:none!important;opacity:1!important;transform:none!important}
@@ -640,15 +646,15 @@
         <button class="view-btn" data-view="portfolio" role="tab" aria-selected="false">Portfolio</button>
       </div>
       <div class="tagline-wrap">
-        <div class="tagline" data-view="work">
-          <p>Currently IT Technician at <em>NorthX Biologics, Sweden's national innovation hub for advanced biologics</em>.</p>
-          <p>Keeping the systems behind cell &amp; gene therapy reliable, validated, and a little smarter every quarter. Infrastructure, security, automation, and the occasional controlled chaos.</p>
-        </div>
         <div class="tagline active" data-view="person">
           <p>Calm and collected, with a problem-solving habit and a bias for finding the <em>opportunity</em> in something messy. Growth is the part of the job I care about: owning hard problems, learning new domains, making things measurably better.</p>
           <p>Honest flaw: I deep-dive. I'll spend the extra hour chasing the root cause when a quick patch would do. Working on calling the trade-off out loud sooner.</p>
           <p><em>Off the clock</em>, wife and two kids. Most evenings end up on the floor with them.</p>
           <p>After bedtime, side projects. Small game builds, mostly to keep a hand in code outside of work and to scratch the design itch tickets don't reach. Same impulse pulls me into LLMs, the homelab, and whatever tool I haven't pulled apart yet. Every new system is just another thing to figure out from the inside.</p>
+        </div>
+        <div class="tagline" data-view="work">
+          <p>Currently IT Technician at <em>NorthX Biologics, Sweden's national innovation hub for advanced biologics</em>.</p>
+          <p>Keeping the systems behind cell &amp; gene therapy reliable, validated, and a little smarter every quarter. Infrastructure, security, automation, and the occasional controlled chaos.</p>
         </div>
         <div class="tagline" data-view="portfolio">
           <p>After-hours and weekend builds — small projects to keep a hand in code and scratch the design itch. Each one links out so you can play it or read more.</p>
