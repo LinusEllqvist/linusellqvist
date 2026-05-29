@@ -99,12 +99,14 @@
     });
   }
 
-  /* ====== Ambient Pac-Man field ======
-     A subtle, fixed background. Dots are laid out as straight corridors with
-     sharp corners (no maze border). Pac-Man pathfinds (BFS) to the nearest
-     remaining dot; the ghost pathfinds to Pac-Man. Eaten dots fade back in
-     after a while. If the ghost catches Pac-Man, Pac-Man vanishes for 5s and
-     respawns at its start; the ghost holds still while Pac-Man is gone. */
+  /* ====== Ambient Pac-Man game ======
+     A subtle, fixed-background maze. Pac-Man eats dots (score +1) and power
+     pellets (+5); a pellet lets him hunt ghosts for a while (each eaten ghost
+     scores +5, +10, +15 ...). Ghosts spawn from the four corners — one is an
+     interceptor, the rest chase — and a new one joins each uncaught minute up
+     to four. Getting caught costs half the score (the high score never drops)
+     and resets the swarm to one. Earned score buys +SPD / +PWR upgrades in the
+     header HUD. */
   (function(){
     const canvas = document.getElementById('pac-canvas');
     if(!canvas || !canvas.getContext) return;
@@ -112,17 +114,23 @@
     const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     const CELL = 34;          // px per grid cell
-    const PAC_SPEED  = 3.2;   // cells / second
-    const GHOST_SPEED = 1.9;  // much slower so Pac-Man can actually escape
+    const PAC_BASE = 2.5, PAC_SPD_INC = 0.12;   // base speed + per-upgrade boost
+    const GHOST_SPEED = 2.2;
+    const FRIGHT_FACTOR = 0.6; // frightened ghosts slow so Pac-Man can catch them
     const DIRS = [[1,0],[-1,0],[0,1],[0,-1]];
     const key = (x,y)=> x+','+y;
-    const PAC_ALPHA = 0.4, GHOST_ALPHA = 0.3, DOT_ALPHA = 0.18;
-    const FADE_SPEED = 2.5;   // opacity units / second for spawn/death fades
-    const RELEASE_MS = 60000; // release another ghost each uncaught minute
+    const PAC_ALPHA = 0.4, GHOST_ALPHA = 0.3, DOT_ALPHA = 0.18, PELLET_ALPHA = 0.5;
+    const FADE_SPEED = 2.5;    // opacity units / second for spawn/death fades
+    const RELEASE_MS = 60000;  // release another ghost each uncaught minute
     const MAX_GHOSTS = 4;
+    const POWER_MS = 10000, POWER_SAFE_MS = 3000, GHOST_EATEN_MS = 10000, PELLET_RESPAWN_MS = 20000;
+    const SPD_MAX = 20, PWR_MAX = 20;
 
     let W, H, cols, rows, offX, offY, dpr;
-    let open, graph, dots, pac, ghosts, nestCells, nextRelease, startCell;
+    let open, graph, dots, pellets, pac, ghosts, nestCells, nextRelease, startCell;
+    let powerUntil = 0, eatenCombo = 0, pacSpeed = PAC_BASE;
+    let score = 0, high = 0, spdLevel = 0, pwrLevel = 0;
+    let scoreEl, highEl, spdBtn, pwrBtn;
     let last = 0;
 
     function inGrid(x,y){ return x>=0 && y>=0 && x<cols && y<rows; }
@@ -218,29 +226,40 @@
       dots = new Map();
       open.forEach(k=>{ if(!noDot.has(k)) dots.set(k, {eaten:false, respawnAt:0, fade:1}); });
 
-      // Ghost nests at the bottom of the page (up to MAX_GHOSTS, spread out).
-      const byBottom = [...open].sort((a,b)=>{
-        const ya=+a.split(',')[1], yb=+b.split(',')[1];
-        return yb-ya || (+a.split(',')[0]) - (+b.split(',')[0]);
-      });
-      nestCells = [];
-      for(const k of byBottom){
-        if(nestCells.length>=MAX_GHOSTS) break;
-        const x = +k.split(',')[0];
-        if(nestCells.every(n=> Math.abs((+n.split(',')[0]) - x) >= 3)) nestCells.push(k);
-      }
-      if(!nestCells.length) nestCells = [byBottom[0]];
+      // Ghost nests in the four corners, in spawn order:
+      // bottom-left, bottom-right, top-left, top-right.
+      nestCells = [ cornerNest(0, rows-1), cornerNest(cols-1, rows-1), cornerNest(0, 0), cornerNest(cols-1, 0) ];
 
       pac = mover(startCell); pac.dir = [1,0];
       pac.fade = 1; pac.fadeTarget = 1; pac.dead = false; pac.deadUntil = 0;
 
-      // Start with a single ghost; more are released over time.
-      ghosts = [ makeGhost(nestCells[0]) ];
+      // Start with a single chaser; more (incl. an interceptor) join over time.
+      ghosts = [ makeGhost(nestCells[0], 'chase') ];
       nextRelease = performance.now() + RELEASE_MS;
+      powerUntil = 0; eatenCombo = 0;
+      placePellets();
+    }
+
+    function cornerNest(cx, cy){
+      let best = startCell, bd = Infinity;
+      open.forEach(k=>{ const [x,y]=k.split(',').map(Number); const d=Math.abs(x-cx)+Math.abs(y-cy); if(d<bd){ bd=d; best=k; } });
+      return best;
+    }
+    function nearestOpenTo(tx, ty){
+      let best = pac.cell, bd = Infinity;
+      open.forEach(k=>{ const [x,y]=k.split(',').map(Number); const d=Math.abs(x-tx)+Math.abs(y-ty); if(d<bd){ bd=d; best=k; } });
+      return best;
+    }
+    function placePellets(){ pellets = new Map(); addPellets(1 + pwrLevel); }
+    function addPellets(target){
+      const avail = [...open].filter(k=> k!==startCell && !pellets.has(k));
+      while(pellets.size < target && avail.length){
+        pellets.set(avail.splice((Math.random()*avail.length)|0, 1)[0], {eaten:false, respawnAt:0, fade:1});
+      }
     }
 
     function mover(cell){ return {cell, from:cell, to:cell, t:1, dir:[1,0]}; }
-    function makeGhost(cell){ const m = mover(cell); m.fade = 0; m.fadeTarget = 1; m.nest = cell; m.respawn = false; return m; }
+    function makeGhost(cell, role){ const m = mover(cell); m.fade = 0; m.fadeTarget = 1; m.nest = cell; m.role = role||'chase'; m.eatenUntil = 0; return m; }
     function approach(v, target, dt){ const s = FADE_SPEED*dt; return v<target ? Math.min(target, v+s) : v>target ? Math.max(target, v-s) : v; }
 
     // BFS — returns the first neighbour of `start` on the shortest path to any
@@ -262,7 +281,34 @@
 
     function eatDot(cell){
       const d = dots.get(cell);
-      if(d && !d.eaten){ d.eaten = true; d.fade = 0; d.respawnAt = performance.now() + 6000 + Math.random()*9000; }
+      if(d && !d.eaten){ d.eaten = true; d.fade = 0; d.respawnAt = performance.now() + 6000 + Math.random()*9000; return true; }
+      return false;
+    }
+    function eatPellet(cell, now){
+      const p = pellets.get(cell);
+      if(p && !p.eaten){ p.eaten = true; p.fade = 0; p.respawnAt = now + PELLET_RESPAWN_MS; powerUntil = now + POWER_MS; eatenCombo = 0; addScore(5); }
+    }
+    const powered = now => now < powerUntil;
+    const present = (g, now) => g.fade > 0.5 && now >= g.eatenUntil;   // visible & not respawning
+
+    // ----- score / upgrades -----
+    function spdCost(){ return Math.ceil(10 * Math.pow(1.6, spdLevel)); }
+    function pwrCost(){ return Math.ceil(10 * Math.pow(1.6, pwrLevel)); }
+    function recalcSpeed(){ pacSpeed = PAC_BASE + spdLevel*PAC_SPD_INC; }
+    function addScore(n){ score += n; if(score > high) high = score; updateHUD(); }
+    function loseHalf(){ score = Math.floor(score * 0.5); updateHUD(); }   // high score is never reduced
+    function updateHUD(){
+      if(scoreEl) scoreEl.textContent = score;
+      if(highEl)  highEl.textContent  = high;
+      if(spdBtn){ spdBtn.textContent = '+SPD ' + (spdLevel>=SPD_MAX ? 'MAX' : spdCost()); spdBtn.disabled = spdLevel>=SPD_MAX || score<spdCost(); }
+      if(pwrBtn){ pwrBtn.textContent = '+PWR ' + (pwrLevel>=PWR_MAX ? 'MAX' : pwrCost()); pwrBtn.disabled = pwrLevel>=PWR_MAX || score<pwrCost(); }
+    }
+    function initHUD(){
+      scoreEl=document.getElementById('pac-score'); highEl=document.getElementById('pac-high');
+      spdBtn=document.getElementById('upg-spd');     pwrBtn=document.getElementById('upg-pwr');
+      if(spdBtn) spdBtn.addEventListener('click', ()=>{ const c=spdCost(); if(spdLevel<SPD_MAX && score>=c){ score-=c; spdLevel++; recalcSpeed(); updateHUD(); } });
+      if(pwrBtn) pwrBtn.addEventListener('click', ()=>{ const c=pwrCost(); if(pwrLevel<PWR_MAX && score>=c){ score-=c; pwrLevel++; if(pellets) addPellets(1+pwrLevel); updateHUD(); } });
+      updateHUD();
     }
 
     // Multi-source BFS distance field over the graph (0 at every source).
@@ -276,40 +322,68 @@
       return dist;
     }
 
-    // Pac-Man's "smart" move. When no ghost is near he heads for the closest
-    // dot. When one closes in (within ~6 cells) he commits to fleeing: he stops
-    // caring about dots, climbs the safety gradient away from the ghost, keeps
-    // his heading (momentum) and strongly resists reversing — so he no longer
-    // turns back toward a pursuer to "check".
+    // Pac-Man's move. Powered up he hunts the nearest ghost (but eases off in
+    // the last few seconds so he isn't caught when it wears off). Otherwise he
+    // heads for the nearest dot/pellet, and commits to fleeing — keeping his
+    // heading, resisting reversing — when a ghost closes within ~6 cells.
     function pacNext(){
       const nb = graph.get(pac.cell) || [];
       if(!nb.length) return null;
-      const ghostCells = ghosts.filter(g=> g.fade>0.5 && !g.respawn).map(g=> g.cell);
-      const gd = ghostCells.length ? field(ghostCells) : null;       // dist to nearest ghost
+      const now = performance.now();
+      const live = ghosts.filter(g=> present(g, now)).map(g=> g.cell);
+
+      if(now < powerUntil && (powerUntil - now) > POWER_SAFE_MS && live.length){
+        const gf = field(live);                                     // hunt: minimise distance to a ghost
+        let best = nb[0], bs = Infinity;
+        for(const n of nb){ let s = gf.has(n) ? gf.get(n) : 1e9; if(n===pac.from) s += 0.5; if(s < bs){ bs = s; best = n; } }
+        return best;
+      }
+
+      const gd = live.length ? field(live) : null;
       const gNow = gd && gd.has(pac.cell) ? gd.get(pac.cell) : Infinity;
       const threatened = gNow <= 6;
       let dd = null;
       if(!threatened){
-        const dotCells = []; dots.forEach((d,k)=>{ if(!d.eaten) dotCells.push(k); });
-        dd = field(dotCells);                                        // dist to nearest dot
+        const goals = []; dots.forEach((d,k)=>{ if(!d.eaten) goals.push(k); }); pellets.forEach((p,k)=>{ if(!p.eaten) goals.push(k); });
+        dd = field(goals);
       }
       const cx = +pac.cell.split(',')[0], cy = +pac.cell.split(',')[1];
       let best = nb[0], bestScore = -Infinity;
       for(const n of nb){
         const g = gd && gd.has(n) ? gd.get(n) : Infinity;
-        let score;
+        let s;
         if(threatened){
-          if(g <= 1){ score = -1e6; }                               // never step onto a ghost
-          else { score = Math.min(g,12) * 4 + (graph.get(n).length) * 1.2; }  // safety + escape routes
+          if(g <= 1){ s = -1e6; }
+          else { s = Math.min(g,12) * 4 + (graph.get(n).length) * 1.2; }
         } else {
-          score = -(dd.has(n) ? dd.get(n) : 50);                    // head for the nearest dot
+          s = -(dd.has(n) ? dd.get(n) : 50);
         }
         const nx = +n.split(',')[0], ny = +n.split(',')[1];
-        if(nx-cx === pac.dir[0] && ny-cy === pac.dir[1]) score += 1.0;  // momentum: keep heading
-        if(n === pac.from) score -= 2.5;                            // resist reversing
-        if(score > bestScore){ bestScore = score; best = n; }
+        if(nx-cx === pac.dir[0] && ny-cy === pac.dir[1]) s += 1.0;   // momentum
+        if(n === pac.from) s -= 2.5;                                 // resist reversing
+        if(s > bestScore){ bestScore = s; best = n; }
       }
       return best;
+    }
+
+    // Ghosts: frightened ghosts flee Pac-Man; one ghost intercepts (aims ahead
+    // of him), the rest tail-chase.
+    function ghostNext(g){
+      const now = performance.now();
+      const nb = graph.get(g.cell) || [];
+      if(!nb.length) return null;
+      if(powered(now)){
+        const f = field([pac.cell]);
+        let best = nb[0], bs = -Infinity;
+        for(const n of nb){ let s = f.has(n) ? f.get(n) : 0; if(n===g.from) s -= 1.5; if(s > bs){ bs = s; best = n; } }
+        return best;
+      }
+      if(g.role === 'intercept'){
+        const tx = (+pac.cell.split(',')[0]) + pac.dir[0]*4, ty = (+pac.cell.split(',')[1]) + pac.dir[1]*4;
+        const target = nearestOpenTo(tx, ty);
+        return bfsStep(g.cell, c=> c===target) || bfsStep(g.cell, c=> c===pac.cell);
+      }
+      return bfsStep(g.cell, c=> c===pac.cell);
     }
 
     function chooseNext(m){
@@ -317,7 +391,7 @@
       if(m===pac){
         step = pacNext();
       } else {
-        step = bfsStep(m.cell, c=> c===pac.cell);
+        step = ghostNext(m);
       }
       if(!step){ m.to = m.cell; m.t = 1; return; }
       const f = m.cell.split(',').map(Number), t = step.split(',').map(Number);
@@ -326,7 +400,7 @@
 
     function arrive(m){
       m.cell = m.to;
-      if(m===pac) eatDot(m.cell);
+      if(m===pac){ if(eatDot(m.cell)) addScore(1); eatPellet(m.cell, performance.now()); }
     }
 
     function step(m, speed, dt){
@@ -345,24 +419,29 @@
 
     function catchPac(now){
       pac.dead = true; pac.deadUntil = now + 5000; pac.fadeTarget = 0;
-      // Every ghost fades out; the swarm is reset to a single ghost on respawn.
-      ghosts.forEach(g=>{ g.fadeTarget = 0; g.respawn = false; });
+      powerUntil = 0;
+      ghosts.forEach(g=>{ g.fadeTarget = 0; });   // all fade out; reset to one on respawn
+      loseHalf();                                 // death costs 50% of current score
     }
 
     function update(now, dt){
-      // Dot respawn + fade-in.
+      // Dots + power pellets: respawn timers and fade-in.
       dots.forEach(d=>{
         if(d.eaten && now >= d.respawnAt){ d.eaten = false; d.fade = 0; }
         if(!d.eaten && d.fade < 1){ d.fade = Math.min(1, d.fade + dt*1.1); }
       });
+      pellets.forEach(p=>{
+        if(p.eaten && now >= p.respawnAt){ p.eaten = false; p.fade = 0; }
+        if(!p.eaten && p.fade < 1){ p.fade = Math.min(1, p.fade + dt*1.1); }
+      });
 
-      // Pac-Man + ghost opacity fades.
+      // Opacity fades; eaten ghosts return to their nest after a delay.
       pac.fade = approach(pac.fade, pac.fadeTarget, dt);
       ghosts.forEach(g=>{
         g.fade = approach(g.fade, g.fadeTarget, dt);
-        if(g.respawn && g.fade <= 0.02){      // once faded out, reappear at the nest
+        if(g.eatenUntil && now >= g.eatenUntil){
           g.cell = g.nest; g.from = g.nest; g.to = g.nest; g.t = 1;
-          g.respawn = false; g.fadeTarget = 1;
+          g.eatenUntil = 0; g.fadeTarget = 1;
         }
       });
 
@@ -370,34 +449,47 @@
         if(now >= pac.deadUntil){
           pac.dead = false; pac.cell = startCell; pac.from = startCell; pac.to = startCell; pac.t = 1;
           pac.fadeTarget = 1;
-          ghosts = [ makeGhost(nestCells[0]) ];   // back to a single ghost
-          nextRelease = now + RELEASE_MS;         // restart the uncaught timer
+          ghosts = [ makeGhost(nestCells[0], 'chase') ];   // back to a single ghost
+          nextRelease = now + RELEASE_MS; powerUntil = 0;  // restart the uncaught timer
         }
         return;
       }
 
-      step(pac, PAC_SPEED, dt);
+      step(pac, pacSpeed, dt);
 
-      // Release another ghost for each uncaught minute, up to MAX_GHOSTS.
+      // Release another ghost for each uncaught minute (2nd is the interceptor).
       if(ghosts.length < MAX_GHOSTS && now >= nextRelease){
-        ghosts.push(makeGhost(nestCells[ghosts.length % nestCells.length]));
+        ghosts.push(makeGhost(nestCells[ghosts.length % nestCells.length], ghosts.length===1 ? 'intercept' : 'chase'));
         nextRelease = now + RELEASE_MS;
       }
 
+      const fr = powered(now);
+      ghosts.forEach(g=>{ if(!g.eatenUntil) step(g, fr ? GHOST_SPEED*FRIGHT_FACTOR : GHOST_SPEED, dt); });
+
       const pp = pos(pac);
-      ghosts.forEach(g=> step(g, GHOST_SPEED, dt));
       for(const g of ghosts){
-        if(g.fade < 0.6) continue;            // ignore ghosts mid fade-in/out
+        if(g.fade < 0.6 || g.eatenUntil) continue;   // ignore ghosts mid fade / being eaten
         const gp = pos(g);
-        if(Math.hypot(pp.x-gp.x, pp.y-gp.y) < CELL*0.55){ catchPac(now); break; }
+        if(Math.hypot(pp.x-gp.x, pp.y-gp.y) < CELL*0.55){
+          if(fr){                                    // powered up: Pac-Man eats the ghost
+            eatenCombo++; addScore(5 * eatenCombo);  // +5, +10, +15, +20 ...
+            g.eatenUntil = now + GHOST_EATEN_MS; g.fadeTarget = 0;
+          } else { catchPac(now); break; }
+        }
       }
     }
 
     function drawGhost(g, p, now){
       const r = CELL*0.40;
+      // White normally; blue while edible (frightened), flashing white as it wears off.
+      let body = '#e8f0eb';
+      if(powered(now)){
+        const ending = (powerUntil - now) <= POWER_SAFE_MS;
+        body = (ending && (((now/200)|0) % 2 === 0)) ? '#e8f0eb' : '#00A9E0';
+      }
       ctx.save();
       ctx.globalAlpha = GHOST_ALPHA * g.fade;
-      ctx.fillStyle = '#e8f0eb';                   // white
+      ctx.fillStyle = body;
       ctx.beginPath();
       ctx.arc(p.x, p.y, r, Math.PI, 0);            // dome
       const baseY = p.y + r, feet = 4, wob = (Math.sin(now/180)*1.5);
@@ -440,6 +532,17 @@
         ctx.globalAlpha = DOT_ALPHA * d.fade;
         ctx.beginPath();
         ctx.arc(gx*CELL + CELL/2 + offX, gy*CELL + CELL/2 + offY, 2.2, 0, 7);
+        ctx.fill();
+      });
+      // big chunks (power pellets)
+      ctx.fillStyle = '#cdeede';
+      const pulse = 1 + Math.sin(now/250)*0.18;
+      pellets.forEach((p,k)=>{
+        if(p.eaten) return;
+        const [gx,gy] = k.split(',').map(Number);
+        ctx.globalAlpha = PELLET_ALPHA * p.fade;
+        ctx.beginPath();
+        ctx.arc(gx*CELL + CELL/2 + offX, gy*CELL + CELL/2 + offY, 4.6*pulse, 0, 7);
         ctx.fill();
       });
       ctx.globalAlpha = 1;
@@ -487,7 +590,9 @@
       if(Math.abs(window.innerWidth - W) <= 2){ refit(); return; }   // scroll, not a real resize
       clearTimeout(rt); rt = setTimeout(rebuild, 200);
     });
+    recalcSpeed();
     rebuild();
+    initHUD();
 
     // The page (and title) stay hidden until the gate is unlocked; rebuild once
     // it's visible so the opening line lands just above the real title.
