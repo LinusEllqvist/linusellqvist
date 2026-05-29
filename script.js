@@ -157,38 +157,53 @@
     function buildMaze(){
       open = new Set();
       const noDot = new Set();
-      const add = (x,y,dot)=>{
-        if(!inGrid(x,y)) return;
-        open.add(key(x,y));
-        if(dot===false) noDot.add(key(x,y));
-      };
+      const add = (x,y,dot)=>{ if(!inGrid(x,y)) return; open.add(key(x,y)); if(dot===false) noDot.add(key(x,y)); };
 
-      // 1) Pac-Man's opening run: a horizontal line just above the title.
+      // Maze region below the title row.
       const rowT = Math.min(titleRow(), Math.floor(rows*0.4));
-      const startX = 1, endX = cols - 2;
-      const blank = 3;                                  // empty cells before the dip
-      const dotEnd = Math.max(startX, endX - blank);
+      const sp = 2;                                       // corridor + wall spacing
+      const mTop = rowT + 2, mBot = rows - 2, mLeft = 1, mRight = cols - 2;
+      const ncols = Math.max(2, Math.floor((mRight - mLeft)/sp) + 1);
+      const nrows = Math.max(2, Math.floor((mBot  - mTop )/sp) + 1);
+      const nodeX = i => mLeft + i*sp, nodeY = j => mTop + j*sp;
+      const NB = [[1,0],[-1,0],[0,1],[0,-1]];
+
+      // 1) Carve a random maze (recursive backtracker) over the node grid.
+      const visited = new Set(['0|0']);
+      add(nodeX(0), nodeY(0));
+      const stack = [[0,0]];
+      while(stack.length){
+        const [i,j] = stack[stack.length-1];
+        const cand = [];
+        NB.forEach(([di,dj])=>{ const ni=i+di, nj=j+dj; if(ni>=0&&nj>=0&&ni<ncols&&nj<nrows&&!visited.has(ni+'|'+nj)) cand.push([ni,nj,di,dj]); });
+        if(!cand.length){ stack.pop(); continue; }
+        const [ni,nj,di,dj] = cand[(Math.random()*cand.length)|0];
+        visited.add(ni+'|'+nj);
+        add(nodeX(i)+di, nodeY(j)+dj);                   // open the wall between
+        add(nodeX(ni), nodeY(nj));
+        stack.push([ni,nj]);
+      }
+
+      // 2) Braid: every node with a single passage gets another, so no corridor
+      //    ever dead-ends — each end meets a corner, T or crossing.
+      for(let i=0;i<ncols;i++) for(let j=0;j<nrows;j++){
+        const nx=nodeX(i), ny=nodeY(j);
+        const opened = NB.filter(([di,dj])=> open.has(key(nx+di,ny+dj)));
+        if(opened.length<=1){
+          const closed = NB.filter(([di,dj])=>{ const ni=i+di,nj=j+dj; return ni>=0&&nj>=0&&ni<ncols&&nj<nrows && !open.has(key(nx+di,ny+dj)); });
+          if(closed.length){ const [di,dj]=closed[(Math.random()*closed.length)|0]; add(nx+di,ny+dj); }
+        }
+      }
+
+      // 3) Pac-Man's opening run: a horizontal line just above the title, joined
+      //    to the maze by a right-hand spine (its main drop) and a left corner,
+      //    so both ends connect and the line itself never dead-ends.
+      const startX = mLeft, endX = nodeX(ncols-1);
+      const blank = 3, dotEnd = Math.max(startX, endX - blank);
       for(let x=startX; x<=endX; x++) add(x, rowT, x<=dotEnd);
       startCell = key(startX, rowT);
-
-      // 2) Right-hand spine: past the blanks the line turns down and runs the
-      //    full height. It's the ONLY join between the opening line and the
-      //    maze (nothing else sits on rowT+1), so the intro always plays.
-      for(let y=rowT; y<=rows-2; y++) add(endX, y);
-
-      // 3) A grid of crossing corridors below the line → a real maze. Horizontals
-      //    always reach the spine on the right; verticals cross them. A few
-      //    segments are dropped and ends trimmed so it isn't perfect graph-paper.
-      const gap = 4, latTop = rowT + 2, latBottom = rows - 2;
-      for(let y=latTop; y<=latBottom; y+=gap){
-        if(y!==latTop && Math.random()<0.18) continue;
-        for(let x=startX; x<=endX; x++) add(x, y);
-      }
-      for(let x=startX; x<=endX; x+=gap){
-        if(x!==startX && Math.random()<0.18) continue;
-        const y0 = latTop + (Math.random()*2|0), y1 = latBottom - (Math.random()*2|0);
-        for(let y=y0; y<=y1; y++) add(x, y);
-      }
+      for(let y=rowT; y<=mTop; y++) add(endX, y);         // spine into top-right node
+      add(startX, rowT+1);                                // corner into top-left node
 
       // Collapse to the connected field that contains Pac-Man's start.
       graph = buildGraph(open);
