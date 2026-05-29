@@ -276,28 +276,37 @@
       return dist;
     }
 
-    // Pac-Man's "smart" move: head for dots when safe, but flee toward open
-    // junctions (away from ghosts) when one closes in. Scores each neighbour by
-    // distance-to-nearest-dot vs distance-to-nearest-ghost.
+    // Pac-Man's "smart" move. When no ghost is near he heads for the closest
+    // dot. When one closes in (within ~6 cells) he commits to fleeing: he stops
+    // caring about dots, climbs the safety gradient away from the ghost, keeps
+    // his heading (momentum) and strongly resists reversing — so he no longer
+    // turns back toward a pursuer to "check".
     function pacNext(){
       const nb = graph.get(pac.cell) || [];
       if(!nb.length) return null;
       const ghostCells = ghosts.filter(g=> g.fade>0.5 && !g.respawn).map(g=> g.cell);
-      const gd = ghostCells.length ? field(ghostCells) : null;            // dist to nearest ghost
-      const dotCells = []; dots.forEach((d,k)=>{ if(!d.eaten) dotCells.push(k); });
-      const dd = field(dotCells);                                         // dist to nearest dot
+      const gd = ghostCells.length ? field(ghostCells) : null;       // dist to nearest ghost
+      const gNow = gd && gd.has(pac.cell) ? gd.get(pac.cell) : Infinity;
+      const threatened = gNow <= 6;
+      let dd = null;
+      if(!threatened){
+        const dotCells = []; dots.forEach((d,k)=>{ if(!d.eaten) dotCells.push(k); });
+        dd = field(dotCells);                                        // dist to nearest dot
+      }
+      const cx = +pac.cell.split(',')[0], cy = +pac.cell.split(',')[1];
       let best = nb[0], bestScore = -Infinity;
       for(const n of nb){
         const g = gd && gd.has(n) ? gd.get(n) : Infinity;
-        const d = dd.has(n) ? dd.get(n) : 50;
-        let score = -d;                                 // baseline: get closer to a dot
-        if(g <= 1)        score = -1e6;                 // never step onto a ghost
-        else if(g <= 5){                                // threatened: prioritise survival
-          score += g * 3.5;                             // climb the safety gradient
-          score += (graph.get(n).length) * 1.5;         // prefer junctions to dead-ends
-          score -= (6 - g) * 4;                         // the closer the ghost, the more urgent
+        let score;
+        if(threatened){
+          if(g <= 1){ score = -1e6; }                               // never step onto a ghost
+          else { score = Math.min(g,12) * 4 + (graph.get(n).length) * 1.2; }  // safety + escape routes
+        } else {
+          score = -(dd.has(n) ? dd.get(n) : 50);                    // head for the nearest dot
         }
-        if(n === pac.from) score -= 0.6;                // small anti-jitter (avoid pointless reversing)
+        const nx = +n.split(',')[0], ny = +n.split(',')[1];
+        if(nx-cx === pac.dir[0] && ny-cy === pac.dir[1]) score += 1.0;  // momentum: keep heading
+        if(n === pac.from) score -= 2.5;                            // resist reversing
         if(score > bestScore){ bestScore = score; best = n; }
       }
       return best;
@@ -336,8 +345,8 @@
 
     function catchPac(now){
       pac.dead = true; pac.deadUntil = now + 5000; pac.fadeTarget = 0;
-      // Every ghost fades out and respawns back at its nest.
-      ghosts.forEach(g=>{ g.fadeTarget = 0; g.respawn = true; });
+      // Every ghost fades out; the swarm is reset to a single ghost on respawn.
+      ghosts.forEach(g=>{ g.fadeTarget = 0; g.respawn = false; });
     }
 
     function update(now, dt){
@@ -358,10 +367,11 @@
       });
 
       if(pac.dead){
-        // Ghosts hold at their nests until Pac-Man comes back.
         if(now >= pac.deadUntil){
           pac.dead = false; pac.cell = startCell; pac.from = startCell; pac.to = startCell; pac.t = 1;
-          pac.fadeTarget = 1; nextRelease = now + RELEASE_MS;   // reset the uncaught timer
+          pac.fadeTarget = 1;
+          ghosts = [ makeGhost(nestCells[0]) ];   // back to a single ghost
+          nextRelease = now + RELEASE_MS;         // restart the uncaught timer
         }
         return;
       }
@@ -445,29 +455,46 @@
       requestAnimationFrame(frame);
     }
 
-    function resize(){
+    function applyCanvasSize(){
+      canvas.width = W*dpr; canvas.height = H*dpr;
+      canvas.style.width = W+'px'; canvas.style.height = H+'px';
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+    }
+
+    // Full reset: re-grid and regenerate the maze (orientation / width change).
+    function rebuild(){
       dpr = Math.min(2, window.devicePixelRatio || 1);
       W = window.innerWidth; H = window.innerHeight;
       cols = Math.max(8, Math.floor(W/CELL));
       rows = Math.max(8, Math.floor(H/CELL));
       offX = (W - cols*CELL)/2;
       offY = (H - rows*CELL)/2;
-      canvas.width = W*dpr; canvas.height = H*dpr;
-      canvas.style.width = W+'px'; canvas.style.height = H+'px';
-      ctx.setTransform(dpr,0,0,dpr,0,0);
+      applyCanvasSize();
       buildMaze();
     }
 
+    // Height-only change (mobile address bar showing/hiding on scroll): just
+    // refit the canvas so the game carries on instead of resetting.
+    function refit(){
+      dpr = Math.min(2, window.devicePixelRatio || 1);
+      H = window.innerHeight;
+      offY = (H - rows*CELL)/2;
+      applyCanvasSize();
+    }
+
     let rt;
-    window.addEventListener('resize', ()=>{ clearTimeout(rt); rt = setTimeout(resize, 200); });
-    resize();
+    window.addEventListener('resize', ()=>{
+      if(Math.abs(window.innerWidth - W) <= 2){ refit(); return; }   // scroll, not a real resize
+      clearTimeout(rt); rt = setTimeout(rebuild, 200);
+    });
+    rebuild();
 
     // The page (and title) stay hidden until the gate is unlocked; rebuild once
     // it's visible so the opening line lands just above the real title.
     if(!document.body.classList.contains('unlocked')){
       const mo = new MutationObserver(()=>{
         if(document.body.classList.contains('unlocked')){
-          mo.disconnect(); resize();
+          mo.disconnect(); rebuild();
           if(reduce){ ghosts.forEach(g=>g.fade=1); render(performance.now()); }
         }
       });
