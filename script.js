@@ -4,7 +4,7 @@
     // the source. Note: on a static site this only deters casual snooping; a
     // short numeric code can still be brute-forced offline by a determined visitor.
     const HASH = '8889f9aaec125c63f9258625ec3671410f6b2aaf4cacacace05dedf14c66e21c';
-    const KEY  = 'cv-unlocked';
+    const KEY  = 'site-unlocked';
     const gate  = document.getElementById('gate');
     const form  = document.getElementById('gate-form');
     const input = document.getElementById('gate-input');
@@ -79,54 +79,383 @@
     });
   })();
 
-  /* ====== Counter animation ====== */
-  (function(){
-    document.querySelectorAll('.stat .v').forEach((el,idx)=>{
+  /* ====== Counter animation (runs each time the Work view is opened) ====== */
+  function runCounters(){
+    document.querySelectorAll('.stat .v').forEach(el=>{
       const target = parseFloat(el.dataset.count);
       const isFloat = !Number.isInteger(target);
       const dur = 1100;
-      const start = performance.now() + 1500 + idx*100;
+      const start = performance.now();
+      el.firstChild.textContent = isFloat ? '0.0' : '0';
       function tick(now){
-        if(now < start){ requestAnimationFrame(tick); return; }
         const t = Math.min(1,(now-start)/dur);
         const eased = 1 - Math.pow(1-t, 3);
         const val = isFloat ? (target*eased).toFixed(1) : Math.floor(target*eased);
-        const unit = el.querySelector('.unit');
         el.firstChild.textContent = val;
         if(t<1) requestAnimationFrame(tick);
         else el.firstChild.textContent = isFloat ? target.toFixed(1) : target;
       }
       requestAnimationFrame(tick);
     });
-  })();
+  }
 
-  /* ====== DNA helix generation ====== */
+  /* ====== Ambient Pac-Man field ======
+     A subtle, fixed background. Dots are laid out as straight corridors with
+     sharp corners (no maze border). Pac-Man pathfinds (BFS) to the nearest
+     remaining dot; the ghost pathfinds to Pac-Man. Eaten dots fade back in
+     after a while. If the ghost catches Pac-Man, Pac-Man vanishes for 5s and
+     respawns at its start; the ghost holds still while Pac-Man is gone. */
   (function(){
-    const svg = document.querySelector('.helix svg g');
-    if(!svg) return;
-    const W = 200, H = 300, steps = 22;
-    let html = '';
-    for(let i=0;i<steps;i++){
-      const t = i/(steps-1);
-      const y = 10 + t*(H-20);
-      const phase = t*Math.PI*4;
-      const x1 = 100 + Math.sin(phase)*44;
-      const x2 = 100 + Math.sin(phase+Math.PI)*44;
-      // rung
-      html += `<line class="rung" x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" opacity="${0.25 + 0.5*Math.abs(Math.cos(phase))}"/>`;
-      html += `<circle class="node" cx="${x1}" cy="${y}" r="2.6"/>`;
-      html += `<circle class="node alt" cx="${x2}" cy="${y}" r="2.6"/>`;
+    const canvas = document.getElementById('pac-canvas');
+    if(!canvas || !canvas.getContext) return;
+    const ctx = canvas.getContext('2d');
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    const CELL = 34;          // px per grid cell
+    const PAC_SPEED  = 3.2;   // cells / second
+    const GHOST_SPEED = 1.9;  // much slower so Pac-Man can actually escape
+    const DIRS = [[1,0],[-1,0],[0,1],[0,-1]];
+    const key = (x,y)=> x+','+y;
+    const PAC_ALPHA = 0.4, GHOST_ALPHA = 0.3, DOT_ALPHA = 0.18;
+    const FADE_SPEED = 2.5;   // opacity units / second for spawn/death fades
+    const RELEASE_MS = 60000; // release another ghost each uncaught minute
+    const MAX_GHOSTS = 4;
+
+    let W, H, cols, rows, offX, offY, dpr;
+    let open, graph, dots, pac, ghosts, nestCells, nextRelease, startCell;
+    let last = 0;
+
+    function inGrid(x,y){ return x>=0 && y>=0 && x<cols && y<rows; }
+
+    // Adjacency over open cells (4-directional, no screen wrapping).
+    function buildGraph(cellset){
+      const g = new Map();
+      cellset.forEach(k=>{
+        const [x,y] = k.split(',').map(Number);
+        const nb = [];
+        DIRS.forEach(d=>{ const nk = key(x+d[0], y+d[1]); if(cellset.has(nk)) nb.push(nk); });
+        g.set(k, nb);
+      });
+      return g;
     }
-    svg.innerHTML = html;
+
+    // Cells reachable from `start` — keeps the field one connected graph so
+    // every dot has a route and the ghost can never be stranded.
+    function componentOf(g, start){
+      const seen = new Set([start]); const q = [start];
+      while(q.length){ const c = q.shift(); for(const n of (g.get(c)||[])){ if(!seen.has(n)){ seen.add(n); q.push(n); } } }
+      return seen;
+    }
+
+    // Grid row just above the page title (falls back to a sane spot if it can't
+    // be measured yet, e.g. while the security gate still covers the page).
+    function titleRow(){
+      try{
+        const el = document.getElementById('name');
+        const r = el && el.getBoundingClientRect();
+        if(r && r.height){ return Math.max(2, Math.round((r.top - offY)/CELL) - 1); }
+      }catch(e){}
+      return Math.max(2, Math.round(H*0.16/CELL));
+    }
+
+    function buildMaze(){
+      open = new Set();
+      const noDot = new Set();
+      const add = (x,y,dot)=>{ if(!inGrid(x,y)) return; open.add(key(x,y)); if(dot===false) noDot.add(key(x,y)); };
+
+      // Maze region below the title row.
+      const rowT = Math.min(titleRow(), Math.floor(rows*0.4));
+      const sp = 2;                                       // corridor + wall spacing
+      const mTop = rowT + 2, mBot = rows - 2, mLeft = 1, mRight = cols - 2;
+      const ncols = Math.max(2, Math.floor((mRight - mLeft)/sp) + 1);
+      const nrows = Math.max(2, Math.floor((mBot  - mTop )/sp) + 1);
+      const nodeX = i => mLeft + i*sp, nodeY = j => mTop + j*sp;
+      const NB = [[1,0],[-1,0],[0,1],[0,-1]];
+
+      // 1) Carve a random maze (recursive backtracker) over the node grid.
+      const visited = new Set(['0|0']);
+      add(nodeX(0), nodeY(0));
+      const stack = [[0,0]];
+      while(stack.length){
+        const [i,j] = stack[stack.length-1];
+        const cand = [];
+        NB.forEach(([di,dj])=>{ const ni=i+di, nj=j+dj; if(ni>=0&&nj>=0&&ni<ncols&&nj<nrows&&!visited.has(ni+'|'+nj)) cand.push([ni,nj,di,dj]); });
+        if(!cand.length){ stack.pop(); continue; }
+        const [ni,nj,di,dj] = cand[(Math.random()*cand.length)|0];
+        visited.add(ni+'|'+nj);
+        add(nodeX(i)+di, nodeY(j)+dj);                   // open the wall between
+        add(nodeX(ni), nodeY(nj));
+        stack.push([ni,nj]);
+      }
+
+      // 2) Braid: every node with a single passage gets another, so no corridor
+      //    ever dead-ends — each end meets a corner, T or crossing.
+      for(let i=0;i<ncols;i++) for(let j=0;j<nrows;j++){
+        const nx=nodeX(i), ny=nodeY(j);
+        const opened = NB.filter(([di,dj])=> open.has(key(nx+di,ny+dj)));
+        if(opened.length<=1){
+          const closed = NB.filter(([di,dj])=>{ const ni=i+di,nj=j+dj; return ni>=0&&nj>=0&&ni<ncols&&nj<nrows && !open.has(key(nx+di,ny+dj)); });
+          if(closed.length){ const [di,dj]=closed[(Math.random()*closed.length)|0]; add(nx+di,ny+dj); }
+        }
+      }
+
+      // 3) Pac-Man's opening run: a horizontal line just above the title, joined
+      //    to the maze by a right-hand spine (its main drop) and a left corner,
+      //    so both ends connect and the line itself never dead-ends.
+      const startX = mLeft, endX = nodeX(ncols-1);
+      const blank = 3, dotEnd = Math.max(startX, endX - blank);
+      for(let x=startX; x<=endX; x++) add(x, rowT, x<=dotEnd);
+      startCell = key(startX, rowT);
+      for(let y=rowT; y<=mTop; y++) add(endX, y);         // spine into top-right node
+      add(startX, rowT+1);                                // corner into top-left node
+
+      // Collapse to the connected field that contains Pac-Man's start.
+      graph = buildGraph(open);
+      open  = componentOf(graph, startCell);
+      graph = buildGraph(open);
+
+      // Dots on every open cell except the deliberate blanks.
+      dots = new Map();
+      open.forEach(k=>{ if(!noDot.has(k)) dots.set(k, {eaten:false, respawnAt:0, fade:1}); });
+
+      // Ghost nests at the bottom of the page (up to MAX_GHOSTS, spread out).
+      const byBottom = [...open].sort((a,b)=>{
+        const ya=+a.split(',')[1], yb=+b.split(',')[1];
+        return yb-ya || (+a.split(',')[0]) - (+b.split(',')[0]);
+      });
+      nestCells = [];
+      for(const k of byBottom){
+        if(nestCells.length>=MAX_GHOSTS) break;
+        const x = +k.split(',')[0];
+        if(nestCells.every(n=> Math.abs((+n.split(',')[0]) - x) >= 3)) nestCells.push(k);
+      }
+      if(!nestCells.length) nestCells = [byBottom[0]];
+
+      pac = mover(startCell); pac.dir = [1,0];
+      pac.fade = 1; pac.fadeTarget = 1; pac.dead = false; pac.deadUntil = 0;
+
+      // Start with a single ghost; more are released over time.
+      ghosts = [ makeGhost(nestCells[0]) ];
+      nextRelease = performance.now() + RELEASE_MS;
+    }
+
+    function mover(cell){ return {cell, from:cell, to:cell, t:1, dir:[1,0]}; }
+    function makeGhost(cell){ const m = mover(cell); m.fade = 0; m.fadeTarget = 1; m.nest = cell; m.respawn = false; return m; }
+    function approach(v, target, dt){ const s = FADE_SPEED*dt; return v<target ? Math.min(target, v+s) : v>target ? Math.max(target, v-s) : v; }
+
+    // BFS — returns the first neighbour of `start` on the shortest path to any
+    // cell matching isGoal(), or null if none reachable.
+    function bfsStep(start, isGoal){
+      const prev = new Map(); prev.set(start, null);
+      const q = [start]; let goal = null;
+      while(q.length){
+        const c = q.shift();
+        if(c!==start && isGoal(c)){ goal = c; break; }
+        const nbs = graph.get(c) || [];
+        for(const n of nbs){ if(!prev.has(n)){ prev.set(n, c); q.push(n); } }
+      }
+      if(goal===null) return null;
+      let cur = goal, p = prev.get(cur);
+      while(p!==null && p!==start){ cur = p; p = prev.get(cur); }
+      return p===null ? null : cur;
+    }
+
+    function eatDot(cell){
+      const d = dots.get(cell);
+      if(d && !d.eaten){ d.eaten = true; d.fade = 0; d.respawnAt = performance.now() + 6000 + Math.random()*9000; }
+    }
+
+    function chooseNext(m){
+      let step = null;
+      if(m===pac){
+        step = bfsStep(pac.cell, c=>{ const d = dots.get(c); return d && !d.eaten; });
+        if(!step){ const nb = graph.get(pac.cell); step = nb.length ? nb[(Math.random()*nb.length)|0] : null; }
+      } else {
+        step = bfsStep(m.cell, c=> c===pac.cell);
+      }
+      if(!step){ m.to = m.cell; m.t = 1; return; }
+      const f = m.cell.split(',').map(Number), t = step.split(',').map(Number);
+      m.from = m.cell; m.to = step; m.t = 0; m.dir = [t[0]-f[0], t[1]-f[1]];
+    }
+
+    function arrive(m){
+      m.cell = m.to;
+      if(m===pac) eatDot(m.cell);
+    }
+
+    function step(m, speed, dt){
+      if(m.t < 1 && m.to !== m.cell){
+        m.t += speed*dt;
+        if(m.t >= 1){ m.t = 1; arrive(m); }
+      } else { chooseNext(m); }
+    }
+
+    function pos(m){
+      const f = m.from.split(',').map(Number), t = m.to.split(',').map(Number);
+      const x = (f[0] + (t[0]-f[0])*m.t)*CELL + CELL/2 + offX;
+      const y = (f[1] + (t[1]-f[1])*m.t)*CELL + CELL/2 + offY;
+      return {x, y};
+    }
+
+    function catchPac(now){
+      pac.dead = true; pac.deadUntil = now + 5000; pac.fadeTarget = 0;
+      // Every ghost fades out and respawns back at its nest.
+      ghosts.forEach(g=>{ g.fadeTarget = 0; g.respawn = true; });
+    }
+
+    function update(now, dt){
+      // Dot respawn + fade-in.
+      dots.forEach(d=>{
+        if(d.eaten && now >= d.respawnAt){ d.eaten = false; d.fade = 0; }
+        if(!d.eaten && d.fade < 1){ d.fade = Math.min(1, d.fade + dt*1.1); }
+      });
+
+      // Pac-Man + ghost opacity fades.
+      pac.fade = approach(pac.fade, pac.fadeTarget, dt);
+      ghosts.forEach(g=>{
+        g.fade = approach(g.fade, g.fadeTarget, dt);
+        if(g.respawn && g.fade <= 0.02){      // once faded out, reappear at the nest
+          g.cell = g.nest; g.from = g.nest; g.to = g.nest; g.t = 1;
+          g.respawn = false; g.fadeTarget = 1;
+        }
+      });
+
+      if(pac.dead){
+        // Ghosts hold at their nests until Pac-Man comes back.
+        if(now >= pac.deadUntil){
+          pac.dead = false; pac.cell = startCell; pac.from = startCell; pac.to = startCell; pac.t = 1;
+          pac.fadeTarget = 1; nextRelease = now + RELEASE_MS;   // reset the uncaught timer
+        }
+        return;
+      }
+
+      step(pac, PAC_SPEED, dt);
+
+      // Release another ghost for each uncaught minute, up to MAX_GHOSTS.
+      if(ghosts.length < MAX_GHOSTS && now >= nextRelease){
+        ghosts.push(makeGhost(nestCells[ghosts.length % nestCells.length]));
+        nextRelease = now + RELEASE_MS;
+      }
+
+      const pp = pos(pac);
+      ghosts.forEach(g=> step(g, GHOST_SPEED, dt));
+      for(const g of ghosts){
+        if(g.fade < 0.6) continue;            // ignore ghosts mid fade-in/out
+        const gp = pos(g);
+        if(Math.hypot(pp.x-gp.x, pp.y-gp.y) < CELL*0.55){ catchPac(now); break; }
+      }
+    }
+
+    function drawGhost(g, p, now){
+      const r = CELL*0.40;
+      ctx.save();
+      ctx.globalAlpha = GHOST_ALPHA * g.fade;
+      ctx.fillStyle = '#e8f0eb';                   // white
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, Math.PI, 0);            // dome
+      const baseY = p.y + r, feet = 4, wob = (Math.sin(now/180)*1.5);
+      ctx.lineTo(p.x + r, baseY + wob);
+      for(let i=0;i<feet;i++){
+        const x0 = p.x + r - (i*2+1)*(r/feet);
+        const x1 = p.x + r - (i*2+2)*(r/feet);
+        ctx.quadraticCurveTo((x0+x1)/2, baseY - 5 + wob, x1, baseY + wob);
+      }
+      ctx.closePath(); ctx.fill();
+      // dark eyes looking toward movement (readable on the white body)
+      const ex = r*0.36, ey = -r*0.10, er = r*0.30;
+      ctx.fillStyle = '#06241d';
+      const dx = g.dir[0]*er*0.45, dy = g.dir[1]*er*0.45;
+      ctx.beginPath(); ctx.arc(p.x-ex+dx, p.y+ey+dy, er*0.6, 0, 7); ctx.arc(p.x+ex+dx, p.y+ey+dy, er*0.6, 0, 7); ctx.fill();
+      ctx.restore();
+    }
+
+    function drawPac(p, now){
+      const r = CELL*0.42;
+      const ang = Math.atan2(pac.dir[1], pac.dir[0]);
+      const chomp = Math.abs(Math.sin(now/110)) * 0.32 * Math.PI;
+      ctx.save();
+      ctx.globalAlpha = PAC_ALPHA * pac.fade;
+      ctx.fillStyle = '#91D6AC';
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.arc(p.x, p.y, r, ang + chomp, ang + 2*Math.PI - chomp);
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+
+    function render(now){
+      ctx.clearRect(0,0,W,H);
+      // dots
+      ctx.fillStyle = '#91D6AC';
+      dots.forEach((d,k)=>{
+        if(d.eaten) return;
+        const [gx,gy] = k.split(',').map(Number);
+        ctx.globalAlpha = DOT_ALPHA * d.fade;
+        ctx.beginPath();
+        ctx.arc(gx*CELL + CELL/2 + offX, gy*CELL + CELL/2 + offY, 2.2, 0, 7);
+        ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+      ghosts.forEach(g=>{ if(g.fade > 0.01) drawGhost(g, pos(g), now); });
+      if(pac.fade > 0.01) drawPac(pos(pac), now);
+    }
+
+    function frame(now){
+      const dt = Math.min(0.05, (now - last)/1000 || 0);
+      last = now;
+      update(now, dt);
+      render(now);
+      requestAnimationFrame(frame);
+    }
+
+    function resize(){
+      dpr = Math.min(2, window.devicePixelRatio || 1);
+      W = window.innerWidth; H = window.innerHeight;
+      cols = Math.max(8, Math.floor(W/CELL));
+      rows = Math.max(8, Math.floor(H/CELL));
+      offX = (W - cols*CELL)/2;
+      offY = (H - rows*CELL)/2;
+      canvas.width = W*dpr; canvas.height = H*dpr;
+      canvas.style.width = W+'px'; canvas.style.height = H+'px';
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+      buildMaze();
+    }
+
+    let rt;
+    window.addEventListener('resize', ()=>{ clearTimeout(rt); rt = setTimeout(resize, 200); });
+    resize();
+
+    // The page (and title) stay hidden until the gate is unlocked; rebuild once
+    // it's visible so the opening line lands just above the real title.
+    if(!document.body.classList.contains('unlocked')){
+      const mo = new MutationObserver(()=>{
+        if(document.body.classList.contains('unlocked')){
+          mo.disconnect(); resize();
+          if(reduce){ ghosts.forEach(g=>g.fade=1); render(performance.now()); }
+        }
+      });
+      mo.observe(document.body, {attributes:true, attributeFilter:['class']});
+    }
+
+    if(reduce){ ghosts.forEach(g=>g.fade=1); render(performance.now()); return; }   // static frame
+    requestAnimationFrame(frame);
   })();
 
-  /* ====== View toggle (Work / Person) ====== */
+  /* ====== View toggle (Person / Work / Portfolio) ====== */
   (function(){
+    const body = document.body;
+    const views = ['person','work','portfolio'];
     document.querySelectorAll('.view-btn').forEach(btn=>{
       btn.addEventListener('click', ()=>{
         const view = btn.dataset.view;
-        document.querySelectorAll('.view-btn').forEach(b=>b.classList.toggle('active', b===btn));
+        document.querySelectorAll('.view-btn').forEach(b=>{
+          const on = b===btn;
+          b.classList.toggle('active', on);
+          b.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
         document.querySelectorAll('.tagline').forEach(t=>t.classList.toggle('active', t.dataset.view===view));
+        views.forEach(v=>body.classList.toggle('view-'+v, v===view));
+        if(view==='work') runCounters();
       });
     });
   })();
@@ -217,29 +546,23 @@
     ];
     stack.sort((a,b)=>a.n.localeCompare(b.n));
     const el = document.getElementById('stack');
-    const empty = document.createElement('div');
-    empty.className = 'stack-empty';
-    empty.textContent = '// select a category to view items';
-    el.appendChild(empty);
-    stack.forEach((s,i)=>{
+    stack.forEach(s=>{
       const d = document.createElement('span');
-      d.className = 'chip hidden';
+      d.className = 'chip';
       d.dataset.cats = s.c.join(' ');
       d.textContent = s.n;
-      d.style.animationDelay = (i*0.012) + 's';
       el.appendChild(d);
     });
-    // Filter handling — start empty; "All" shows everything, category shows only matches
+    // Filter handling — every chip is always visible; "All" clears highlights,
+    // a category outlines its matches instead of hiding the rest.
     document.querySelectorAll('.filter').forEach(btn=>{
       btn.addEventListener('click', ()=>{
         document.querySelectorAll('.filter').forEach(b=>b.classList.remove('active'));
         btn.classList.add('active');
         const cat = btn.dataset.cat;
-        empty.style.display = 'none';
         document.querySelectorAll('#stack .chip').forEach(chip=>{
           const cats = chip.dataset.cats.split(' ');
-          const show = cat==='all' || cats.includes(cat);
-          chip.classList.toggle('hidden', !show);
+          chip.classList.toggle('highlighted', cat!=='all' && cats.includes(cat));
         });
       });
     });

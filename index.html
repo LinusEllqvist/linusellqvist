@@ -203,7 +203,7 @@
 
   /* ===== HERO ===== */
   .hero{
-    display:grid;grid-template-columns:1fr 220px;gap:32px;
+    display:grid;grid-template-columns:1fr;gap:32px;
     padding:48px 0 36px;border-bottom:1px solid var(--hairline);
     position:relative;
   }
@@ -282,17 +282,11 @@
   .tagline p:last-child{margin-bottom:0}
   .tagline em{color:var(--text);font-style:normal;font-weight:500}
 
-  /* DNA helix */
-  .helix{
-    position:relative;width:220px;height:300px;align-self:center;
-    opacity:0;animation:fadeIn 1.2s 1s forwards;
+  /* Ambient Pac-Man field — fixed so it stays put across view switches */
+  #pac-canvas{
+    position:fixed;inset:0;width:100%;height:100%;
+    z-index:0;pointer-events:none;
   }
-  .helix svg{width:100%;height:100%;overflow:visible}
-  .helix .rung{stroke:var(--hairline-hi);stroke-width:1}
-  .helix .node{fill:var(--accent)}
-  .helix .node.alt{fill:var(--accent-2)}
-  .helix-spin{transform-origin:50% 50%;animation:spin 14s linear infinite}
-  @keyframes spin{to{transform:rotate(360deg)}}
 
   /* ===== STATS ===== */
   .stats{
@@ -306,11 +300,6 @@
   .stat .v{font-family:'Manrope',sans-serif;font-weight:800;font-size:42px;line-height:1;margin-top:8px;color:var(--text);letter-spacing:-.02em}
   .stat .v .unit{font-size:14px;color:var(--accent);font-family:'JetBrains Mono',monospace;margin-left:4px;letter-spacing:.1em;vertical-align:top}
   .stat .sub{font-size:11px;color:var(--dim);margin-top:6px;font-family:'JetBrains Mono',monospace;letter-spacing:.08em}
-  .stat{opacity:0;transform:translateY(20px);animation:slideUp .6s forwards}
-  .stat:nth-child(1){animation-delay:1.5s}
-  .stat:nth-child(2){animation-delay:1.6s}
-  .stat:nth-child(3){animation-delay:1.7s}
-  .stat:nth-child(4){animation-delay:1.8s}
 
   /* ===== MAIN GRID ===== */
   .main{
@@ -332,7 +321,6 @@
     border-left:2px solid transparent;
     transition:border-color .25s ease, background .25s ease;
     cursor:default;
-    opacity:0;animation:slideUp .5s forwards;
   }
   .domain:hover{
     border-left-color:var(--accent);
@@ -343,16 +331,12 @@
   .domain .num{font-family:'JetBrains Mono',monospace;font-size:10.5px;color:var(--dim);letter-spacing:.12em;padding-top:5px;transition:color .25s}
   .domain .name{font-family:'Manrope',sans-serif;font-size:18px;font-weight:700;color:var(--text);transition:color .25s;letter-spacing:-.01em;line-height:1.15}
   .domain .meta{font-family:'JetBrains Mono',monospace;font-size:9.5px;color:var(--muted);letter-spacing:.14em;text-transform:uppercase;margin-top:4px}
-  .domain:nth-child(2){animation-delay:1.9s}.domain:nth-child(3){animation-delay:2.0s}
-  .domain:nth-child(4){animation-delay:2.1s}.domain:nth-child(5){animation-delay:2.2s}
-  .domain:nth-child(6){animation-delay:2.3s}.domain:nth-child(7){animation-delay:2.4s}
 
   /* Ops list */
   .ops{display:flex;flex-direction:column;gap:14px}
   .op{
     display:grid;grid-template-columns:auto 1fr;gap:16px;
     padding:12px 0;border-bottom:1px solid var(--hairline);
-    opacity:0;animation:slideUp .5s forwards;
   }
   .op .tag{
     font-family:'JetBrains Mono',monospace;font-size:9.5px;letter-spacing:.18em;
@@ -363,8 +347,6 @@
   .op .tag.dev{background:var(--accent-2);color:#fff}
   .op .body{font-size:14px;line-height:1.55;color:var(--text)}
   .op .body strong{font-weight:600;color:var(--accent)}
-  .op:nth-child(2){animation-delay:2.0s}.op:nth-child(3){animation-delay:2.1s}
-  .op:nth-child(4){animation-delay:2.2s}.op:nth-child(5){animation-delay:2.3s}
 
   /* Principle blurb */
   .principle{margin-top:32px;padding:20px;border:1px solid var(--hairline);background:var(--surface)}
@@ -429,7 +411,6 @@
     color:#b8c8be;letter-spacing:.04em;
     background:rgba(255,255,255,0.02);
     transition:all .25s ease;cursor:default;
-    opacity:0;transform:translateY(8px);animation:slideUp .4s forwards;
   }
   .chip:hover{border-color:var(--accent);color:var(--accent);background:rgba(145,214,172,0.08);transform:translateY(-2px)}
   .chip.hidden{display:none}
@@ -446,17 +427,69 @@
     box-shadow:0 0 0 1px rgba(0,169,224,0.15);
   }
 
+  /* ===== PORTFOLIO ===== */
+  .portfolio-section{margin-top:42px;display:none}
+  body.view-portfolio .portfolio-section{display:block}
+  /* The CV-style content lives only in the Work view */
+  .stats,.main,.background-section,.stack-section{display:none}
+  body.view-work .stats{display:grid}
+  body.view-work .main{display:grid}
+  body.view-work .background-section{display:block}
+  body.view-work .stack-section{display:block}
+
+  .portfolio-grid{
+    display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:18px;
+  }
+  .project-card{
+    display:flex;flex-direction:column;
+    border:1px solid var(--hairline);background:var(--surface);
+    backdrop-filter:blur(6px);border-radius:4px;padding:22px;
+    text-decoration:none;color:inherit;
+    border-left:2px solid transparent;
+    transition:border-color .25s ease, transform .25s ease, background .25s ease;
+  }
+  .project-card:hover{
+    border-left-color:var(--accent);
+    transform:translateY(-3px);
+    background:linear-gradient(180deg,rgba(145,214,172,0.07),transparent);
+  }
+  .project-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+  .project-title{
+    font-family:'Manrope',sans-serif;font-weight:800;font-size:20px;
+    letter-spacing:-.02em;color:var(--text);transition:color .25s ease;
+  }
+  .project-card:hover .project-title{color:var(--accent)}
+  .project-status{
+    font-family:'JetBrains Mono',monospace;font-size:9px;letter-spacing:.18em;
+    text-transform:uppercase;color:var(--bg);background:var(--accent);
+    padding:4px 8px;border-radius:2px;font-weight:700;white-space:nowrap;
+  }
+  .project-desc{font-size:13.5px;line-height:1.55;color:var(--muted);margin-top:12px;flex:1}
+  .project-stack{display:flex;flex-wrap:wrap;gap:5px;margin-top:16px}
+  .project-stack .ptag{
+    font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.04em;
+    padding:4px 8px;border:1px solid var(--hairline-hi);color:#b8c8be;
+    border-radius:2px;background:rgba(255,255,255,0.02);
+  }
+  .project-link{
+    font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.16em;
+    text-transform:uppercase;color:var(--accent-2);margin-top:16px;
+    font-weight:700;transition:color .25s ease;
+  }
+  .project-card:hover .project-link{color:var(--accent)}
+
   /* ===== FOOTER ===== */
   .footer{
     margin-top:42px;padding-top:24px;border-top:1px solid var(--hairline);
     display:grid;grid-template-columns:1fr 1fr 1fr;gap:24px;align-items:end;
     font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.1em;
     color:var(--muted);text-transform:uppercase;
-    opacity:0;animation:fadeIn .8s 3s forwards;
   }
   .footer .label{font-size:9.5px;color:var(--dim);letter-spacing:.2em;margin-bottom:6px}
   .footer .val{color:var(--text);font-size:13px;letter-spacing:.04em;text-transform:none}
   .footer .val .accent{color:var(--accent)}
+  .footer a{color:var(--accent);text-decoration:none;transition:opacity .2s ease}
+  .footer a:hover{opacity:.75;text-decoration:underline}
   .signature{
     text-align:right;font-family:'Source Sans 3',sans-serif;font-style:italic;font-weight:300;
     font-size:14px;color:var(--muted);text-transform:none;letter-spacing:.01em;
@@ -481,7 +514,7 @@
     .signature{text-align:left}
   }
 
-  /* ===== PRINT: fit on one A4 page ===== */
+  /* ===== PRINT: full profile (person + work + portfolio) on A4 ===== */
   @media print{
     @page{size:A4;margin:10mm}
     .gate{display:none!important}
@@ -495,9 +528,14 @@
     h1.name .italic{color:#00A9E0}
     .tagline{color:#444;font-size:13px}
     .view-toggle{display:none!important}
+    /* Print EVERYTHING in one document: person, work and portfolio. */
+    .stats{display:grid!important}
+    .main{display:grid!important}
+    .background-section,.stack-section{display:block!important}
+    .portfolio-section{display:block!important;margin-top:14px}
+    #pac-canvas{display:none!important}
     .tagline-wrap{margin-top:6px}
-    .tagline[data-view="person"]{display:none!important}
-    .tagline[data-view="work"]{display:block!important}
+    .tagline{display:block!important;margin-bottom:6px}
     .tagline p{margin-bottom:0}
     .helix{display:none}
     .stats{background:none;border-color:#999;margin:10px 0}
@@ -539,20 +577,30 @@
     .chip.hidden{display:inline-block!important}
     .chip.highlighted{border-color:#00A9E0!important;color:#012169!important;background:none!important;font-weight:700!important;box-shadow:none!important}
     .stack-empty{display:none!important}
+    .portfolio-grid{grid-template-columns:1fr 1fr;gap:10px}
+    .project-card{border-color:#ccc;background:none!important;padding:8px 10px;transform:none!important}
+    .project-title{font-size:12px;color:#111}
+    .project-status{background:#034638!important;color:#fff!important;font-size:8px;padding:2px 5px}
+    .project-desc{font-size:10px;color:#333}
+    .project-stack .ptag{font-size:9px;border-color:#bbb;color:#222;background:none}
+    .project-link{color:#012169!important;font-size:9px}
     .footer{margin-top:14px;padding-top:8px;border-color:#ccc}
     .footer .val{color:#111}
     *{animation:none!important;opacity:1!important;transform:none!important}
   }
 </style>
 </head>
-<body>
+<body class="view-person">
+
+<!-- AMBIENT PAC-MAN FIELD -->
+<canvas id="pac-canvas" aria-hidden="true"></canvas>
 
 <!-- SECURITY GATE -->
 <div id="gate" class="gate" role="dialog" aria-modal="true" aria-labelledby="gate-title">
   <div class="gate-card">
     <div class="gate-label"><span class="bar"></span> Restricted</div>
     <h2 id="gate-title" class="gate-title">Enter Security Code</h2>
-    <p class="gate-sub">// This curriculum vitae is access-protected.</p>
+    <p class="gate-sub">// This site is access-protected.</p>
     <form id="gate-form" autocomplete="off">
       <input id="gate-input" class="gate-input" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="12" aria-label="Security code" autocomplete="off" />
       <button class="gate-btn" type="submit">Unlock</button>
@@ -593,30 +641,25 @@
         Sysadmin <span class="hat-sep">·</span> Network <span class="hat-sep">·</span> Security <span class="hat-sep">·</span> Automation <span class="hat-sep">·</span> Full-Stack Dev <span class="hat-sep">·</span> Systems Implementation
       </div>
       <div class="view-toggle" role="tablist">
-        <button class="view-btn active" data-view="person" role="tab">Person</button>
-        <button class="view-btn" data-view="work" role="tab">Work</button>
+        <button class="view-btn active" data-view="person" role="tab" aria-selected="true">Person</button>
+        <button class="view-btn" data-view="work" role="tab" aria-selected="false">Work</button>
+        <button class="view-btn" data-view="portfolio" role="tab" aria-selected="false">Portfolio</button>
       </div>
       <div class="tagline-wrap">
-        <div class="tagline" data-view="work">
-          <p>IT Technician at <em>NorthX Biologics, Sweden's national innovation hub for advanced biologics</em>.</p>
-          <p>Keeping the systems behind cell &amp; gene therapy reliable, validated, and a little smarter every quarter. Infrastructure, security, automation, and the occasional controlled chaos.</p>
-        </div>
         <div class="tagline active" data-view="person">
           <p>Calm and collected, with a problem-solving habit and a bias for finding the <em>opportunity</em> in something messy. Growth is the part of the job I care about: owning hard problems, learning new domains, making things measurably better.</p>
           <p>Honest flaw: I deep-dive. I'll spend the extra hour chasing the root cause when a quick patch would do. Working on calling the trade-off out loud sooner.</p>
           <p><em>Off the clock</em>, wife and two kids. Most evenings end up on the floor with them.</p>
           <p>After bedtime, side projects. Small game builds, mostly to keep a hand in code outside of work and to scratch the design itch tickets don't reach. Same impulse pulls me into LLMs, the homelab, and whatever tool I haven't pulled apart yet. Every new system is just another thing to figure out from the inside.</p>
         </div>
+        <div class="tagline" data-view="work">
+          <p>Currently IT Technician at <em>NorthX Biologics, Sweden's national innovation hub for advanced biologics</em>.</p>
+          <p>Keeping the systems behind cell &amp; gene therapy reliable, validated, and a little smarter every quarter. Infrastructure, security, automation, and the occasional controlled chaos.</p>
+        </div>
+        <div class="tagline" data-view="portfolio">
+          <p>After-hours and weekend builds — small projects to keep a hand in code and scratch the design itch. Each one links out so you can play it or read more.</p>
+        </div>
       </div>
-    </div>
-
-    <!-- DNA HELIX -->
-    <div class="helix" aria-hidden="true">
-      <svg viewBox="0 0 200 300">
-        <g class="helix-spin">
-          <!-- generated by JS -->
-        </g>
-      </svg>
     </div>
   </section>
 
@@ -747,7 +790,7 @@
     <div class="stack-header">
       <div class="stack-title">Stack &amp; Toolchain</div>
       <div class="filters" id="filters">
-        <button class="filter" data-cat="all">All</button>
+        <button class="filter active" data-cat="all">All</button>
         <button class="filter" data-cat="ai">AI</button>
         <button class="filter" data-cat="cloud">Cloud</button>
         <button class="filter" data-cat="security">Security</button>
@@ -761,6 +804,42 @@
       <!-- chips injected by JS -->
     </div>
   </section>
+
+  <!-- PORTFOLIO -->
+  <section class="portfolio-section">
+    <div class="section-label">Portfolio</div>
+    <div class="portfolio-grid">
+
+      <a class="project-card" href="https://linusellqvist.itch.io/ludoremix" target="_blank" rel="noopener">
+        <div class="project-head">
+          <span class="project-title">Ludo Remix</span>
+          <span class="project-status">Live</span>
+        </div>
+        <p class="project-desc">A twist on classic Ludo with collectible perk cards that bend the rules. Real-time online play backed by a Firebase Realtime Database, plus local pass-and-play.</p>
+        <div class="project-stack">
+          <span class="ptag">JavaScript</span>
+          <span class="ptag">HTML</span>
+          <span class="ptag">CSS</span>
+          <span class="ptag">Firebase RTDB</span>
+        </div>
+        <span class="project-link">Play on itch.io &#8594;</span>
+      </a>
+
+    </div>
+  </section>
+
+  <!-- FOOTER -->
+  <footer class="footer">
+    <div>
+      <div class="label">Contact</div>
+      <div class="val"><a href="mailto:contact@linusellqvist.com">contact@linusellqvist.com</a></div>
+    </div>
+    <div>
+      <div class="label">Revision</div>
+      <div class="val">REV 2026.05</div>
+    </div>
+    <div class="signature">SE // Sundsvall</div>
+  </footer>
 
 </div>
 
