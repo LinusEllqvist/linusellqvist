@@ -112,8 +112,8 @@
     const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
     const CELL = 34;          // px per grid cell
-    const PAC_SPEED  = 3.4;   // cells / second
-    const GHOST_SPEED = 3.0;
+    const PAC_SPEED  = 3.2;   // cells / second
+    const GHOST_SPEED = 1.9;  // much slower so Pac-Man can actually escape
     const DIRS = [[1,0],[-1,0],[0,1],[0,-1]];
     const key = (x,y)=> x+','+y;
 
@@ -123,47 +123,104 @@
 
     function inGrid(x,y){ return x>=0 && y>=0 && x<cols && y<rows; }
 
-    // Build connected corridors via branching random walks → lines + corners.
-    function buildMaze(){
-      open = new Set();
-      const cx = Math.floor(cols/2), cy = Math.floor(rows/2);
-      open.add(key(cx,cy));
-      const cells = [[cx,cy]];
-      const walks = Math.max(10, Math.floor((cols*rows)/90));
-      for(let w=0; w<walks; w++){
-        const [sx,sy] = cells[(Math.random()*cells.length)|0];
-        let x=sx, y=sy;
-        const d = DIRS[(Math.random()*4)|0];
-        const len = 3 + (Math.random()*7|0);
-        for(let i=0;i<len;i++){
-          x+=d[0]; y+=d[1];
-          if(!inGrid(x,y)) break;
-          const k = key(x,y);
-          if(!open.has(k)){ open.add(k); cells.push([x,y]); }
-        }
-      }
-      // Adjacency graph over open cells.
-      graph = new Map();
-      open.forEach(k=>{
+    // Adjacency over open cells, with wrap-around tunnels at the screen edges.
+    function buildGraph(cellset){
+      const g = new Map();
+      cellset.forEach(k=>{
         const [x,y] = k.split(',').map(Number);
         const nb = [];
-        DIRS.forEach(d=>{ const nk = key(x+d[0],y+d[1]); if(open.has(nk)) nb.push(nk); });
-        graph.set(k, nb);
+        DIRS.forEach(d=>{
+          let nx = x+d[0], ny = y+d[1];
+          if(nx<0) nx = cols-1; else if(nx>=cols) nx = 0;   // wrap left/right
+          if(ny<0) ny = rows-1; else if(ny>=rows) ny = 0;   // wrap top/bottom
+          const nk = key(nx,ny);
+          if(nk!==k && cellset.has(nk)) nb.push(nk);
+        });
+        g.set(k, nb);
       });
-      // Dots on every open cell.
+      return g;
+    }
+
+    // Cells reachable from `start` — keeps the field one connected graph so
+    // every dot has a route and the ghost can never be stranded.
+    function componentOf(g, start){
+      const seen = new Set([start]); const q = [start];
+      while(q.length){ const c = q.shift(); for(const n of (g.get(c)||[])){ if(!seen.has(n)){ seen.add(n); q.push(n); } } }
+      return seen;
+    }
+
+    // Grid row just above the page title (falls back to a sane spot if it can't
+    // be measured yet, e.g. while the security gate still covers the page).
+    function titleRow(){
+      try{
+        const el = document.getElementById('name');
+        const r = el && el.getBoundingClientRect();
+        if(r && r.height){ return Math.max(2, Math.round((r.top - offY)/CELL) - 1); }
+      }catch(e){}
+      return Math.max(2, Math.round(H*0.16/CELL));
+    }
+
+    function buildMaze(){
+      open = new Set();
+      const noDot = new Set();
+      const lower = [];
+      const add = (x,y,dot)=>{
+        if(!inGrid(x,y)) return;
+        const k = key(x,y);
+        if(!open.has(k)){ open.add(k); lower.push([x,y]); }
+        if(dot===false) noDot.add(k);
+      };
+
+      // 1) Pac-Man's opening run: a horizontal line just above the title.
+      const rowT = Math.min(titleRow(), Math.floor(rows*0.4));
+      const startX = 1, endX = cols - 2;
+      const blank = 3;                                  // empty cells before the dip
+      const dotEnd = Math.max(startX, endX - blank);
+      for(let x=startX; x<=endX; x++) add(x, rowT, x<=dotEnd);
+      startCell = key(startX, rowT);
+
+      // 2) Past the blanks, the line turns straight down.
+      const branchBottom = Math.min(rows-2, rowT + 5 + (Math.random()*4|0));
+      for(let y=rowT; y<=branchBottom; y++) add(endX, y);
+
+      // 3) The rest of the field lives BELOW the title row and joins the opening
+      //    line only through that single down-branch — so Pac-Man always runs
+      //    the line, crosses the gap, then drops into the maze.
+      lower.length = 0; lower.push([endX, branchBottom]);
+      const walks = Math.max(18, Math.floor((cols*rows)/55));
+      for(let w=0; w<walks; w++){
+        const [sx,sy] = lower[(Math.random()*lower.length)|0];
+        let x=sx, y=sy;
+        const d = DIRS[(Math.random()*4)|0];
+        const len = 4 + (Math.random()*8|0);
+        for(let i=0;i<len;i++){
+          x+=d[0]; y+=d[1];
+          if(!inGrid(x,y) || y <= rowT+1) break;        // keep clear of the line
+          const k = key(x,y);
+          if(!open.has(k)){ open.add(k); lower.push([x,y]); }
+        }
+      }
+      // Full-width / full-height lines reach the edges, so the wrap tunnels let
+      // movers cross the screen; they also cross corridors to add loops/routes.
+      const hLines = 2 + (Math.random()*2|0);
+      for(let i=0;i<hLines;i++){ const yy = rowT+2 + (Math.random()*Math.max(1,rows-rowT-3)|0); for(let x=0;x<cols;x++){ const k=key(x,yy); if(!open.has(k)){ open.add(k); lower.push([x,yy]); } } }
+      const vLines = 1 + (Math.random()*2|0);
+      for(let i=0;i<vLines;i++){ const xx = 2 + (Math.random()*(cols-4)|0); for(let y=rowT+2; y<rows; y++){ const k=key(xx,y); if(!open.has(k)){ open.add(k); lower.push([xx,y]); } } }
+
+      // Collapse to the connected field that contains Pac-Man's start.
+      graph = buildGraph(open);
+      open  = componentOf(graph, startCell);
+      graph = buildGraph(open);
+
+      // Dots on every open cell except the deliberate blanks.
       dots = new Map();
-      open.forEach(k=> dots.set(k, {eaten:false, respawnAt:0, fade:1}));
-      // Start cells: a connected cell for Pac-Man, the farthest one for the ghost.
-      const arr = [...open].filter(k=> graph.get(k).length>0);
-      startCell = arr[0] || [...open][0];
-      const sp = startCell.split(',').map(Number);
-      let far = startCell, best = -1;
-      arr.forEach(k=>{
-        const p = k.split(',').map(Number);
-        const dd = Math.abs(p[0]-sp[0]) + Math.abs(p[1]-sp[1]);
-        if(dd>best){ best = dd; far = k; }
-      });
-      pac   = mover(startCell);
+      open.forEach(k=>{ if(!noDot.has(k)) dots.set(k, {eaten:false, respawnAt:0, fade:1}); });
+
+      // Ghost starts at the bottom of the page.
+      let far = startCell, by = -1;
+      open.forEach(k=>{ const y = +k.split(',')[1]; if(y>by){ by = y; far = k; } });
+
+      pac = mover(startCell); pac.dir = [1,0];
       ghost = mover(far);
       pac.dead = false; pac.deadUntil = 0;
     }
@@ -187,6 +244,11 @@
       return p===null ? null : cur;
     }
 
+    function eatDot(cell){
+      const d = dots.get(cell);
+      if(d && !d.eaten){ d.eaten = true; d.fade = 0; d.respawnAt = performance.now() + 6000 + Math.random()*9000; }
+    }
+
     function chooseNext(m){
       let step = null;
       if(m===pac){
@@ -195,18 +257,23 @@
       } else {
         step = bfsStep(ghost.cell, c=> c===pac.cell);
       }
-      if(step){
-        const f = m.cell.split(',').map(Number), t = step.split(',').map(Number);
-        m.from = m.cell; m.to = step; m.t = 0; m.dir = [t[0]-f[0], t[1]-f[1]];
-      } else { m.to = m.cell; m.t = 1; }
+      if(!step){ m.to = m.cell; m.t = 1; return; }
+      const f = m.cell.split(',').map(Number), t = step.split(',').map(Number);
+      const dx = t[0]-f[0], dy = t[1]-f[1];
+      const wrapX = Math.abs(dx) > 1, wrapY = Math.abs(dy) > 1;
+      m.dir = [ wrapX ? -Math.sign(dx) : dx, wrapY ? -Math.sign(dy) : dy ];
+      if(wrapX || wrapY){
+        // Screen-edge tunnel: pop out the far side instead of sliding across.
+        m.cell = step; m.from = step; m.to = step; m.t = 1;
+        if(m===pac) eatDot(step);
+      } else {
+        m.from = m.cell; m.to = step; m.t = 0;
+      }
     }
 
     function arrive(m){
       m.cell = m.to;
-      if(m===pac){
-        const d = dots.get(pac.cell);
-        if(d && !d.eaten){ d.eaten = true; d.fade = 0; d.respawnAt = performance.now() + 6000 + Math.random()*9000; }
-      }
+      if(m===pac) eatDot(m.cell);
     }
 
     function step(m, speed, dt){
@@ -240,9 +307,9 @@
     }
 
     function drawGhost(p, now){
-      const r = CELL*0.42;
+      const r = CELL*0.40;
       ctx.save();
-      ctx.globalAlpha = 0.8;
+      ctx.globalAlpha = 0.40;
       ctx.fillStyle = '#00A9E0';
       ctx.beginPath();
       ctx.arc(p.x, p.y, r, Math.PI, 0);            // dome
@@ -265,12 +332,12 @@
     }
 
     function drawPac(p, now){
-      const r = CELL*0.44;
+      const r = CELL*0.42;
       const ang = Math.atan2(pac.dir[1], pac.dir[0]);
       const chomp = Math.abs(Math.sin(now/110)) * 0.32 * Math.PI;
       ctx.save();
-      ctx.globalAlpha = 0.9;
-      ctx.fillStyle = '#e9d66b';
+      ctx.globalAlpha = 0.5;
+      ctx.fillStyle = '#91D6AC';
       ctx.beginPath();
       ctx.moveTo(p.x, p.y);
       ctx.arc(p.x, p.y, r, ang + chomp, ang + 2*Math.PI - chomp);
@@ -285,7 +352,7 @@
       dots.forEach((d,k)=>{
         if(d.eaten) return;
         const [gx,gy] = k.split(',').map(Number);
-        ctx.globalAlpha = 0.30 * d.fade;
+        ctx.globalAlpha = 0.24 * d.fade;
         ctx.beginPath();
         ctx.arc(gx*CELL + CELL/2 + offX, gy*CELL + CELL/2 + offY, 2.2, 0, 7);
         ctx.fill();
@@ -319,6 +386,18 @@
     let rt;
     window.addEventListener('resize', ()=>{ clearTimeout(rt); rt = setTimeout(resize, 200); });
     resize();
+
+    // The page (and title) stay hidden until the gate is unlocked; rebuild once
+    // it's visible so the opening line lands just above the real title.
+    if(!document.body.classList.contains('unlocked')){
+      const mo = new MutationObserver(()=>{
+        if(document.body.classList.contains('unlocked')){
+          mo.disconnect(); resize();
+          if(reduce) render(performance.now());
+        }
+      });
+      mo.observe(document.body, {attributes:true, attributeFilter:['class']});
+    }
 
     if(reduce){ render(performance.now()); return; }   // static frame, no motion
     requestAnimationFrame(frame);
