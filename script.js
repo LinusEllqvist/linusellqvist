@@ -4,7 +4,7 @@
     // the source. Note: on a static site this only deters casual snooping; a
     // short numeric code can still be brute-forced offline by a determined visitor.
     const HASH = '8889f9aaec125c63f9258625ec3671410f6b2aaf4cacacace05dedf14c66e21c';
-    const KEY  = 'cv-unlocked';
+    const KEY  = 'site-unlocked';
     const gate  = document.getElementById('gate');
     const form  = document.getElementById('gate-form');
     const input = document.getElementById('gate-input');
@@ -120,13 +120,20 @@
     svg.innerHTML = html;
   })();
 
-  /* ====== View toggle (Work / Person) ====== */
+  /* ====== View toggle (Person / Work / Portfolio) ====== */
   (function(){
+    const body = document.body;
+    const views = ['person','work','portfolio'];
     document.querySelectorAll('.view-btn').forEach(btn=>{
       btn.addEventListener('click', ()=>{
         const view = btn.dataset.view;
-        document.querySelectorAll('.view-btn').forEach(b=>b.classList.toggle('active', b===btn));
+        document.querySelectorAll('.view-btn').forEach(b=>{
+          const on = b===btn;
+          b.classList.toggle('active', on);
+          b.setAttribute('aria-selected', on ? 'true' : 'false');
+        });
         document.querySelectorAll('.tagline').forEach(t=>t.classList.toggle('active', t.dataset.view===view));
+        views.forEach(v=>body.classList.toggle('view-'+v, v===view));
       });
     });
   })();
