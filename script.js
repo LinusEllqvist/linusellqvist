@@ -79,45 +79,249 @@
     });
   })();
 
-  /* ====== Counter animation ====== */
-  (function(){
-    document.querySelectorAll('.stat .v').forEach((el,idx)=>{
+  /* ====== Counter animation (runs each time the Work view is opened) ====== */
+  function runCounters(){
+    document.querySelectorAll('.stat .v').forEach(el=>{
       const target = parseFloat(el.dataset.count);
       const isFloat = !Number.isInteger(target);
       const dur = 1100;
-      const start = performance.now() + 1500 + idx*100;
+      const start = performance.now();
+      el.firstChild.textContent = isFloat ? '0.0' : '0';
       function tick(now){
-        if(now < start){ requestAnimationFrame(tick); return; }
         const t = Math.min(1,(now-start)/dur);
         const eased = 1 - Math.pow(1-t, 3);
         const val = isFloat ? (target*eased).toFixed(1) : Math.floor(target*eased);
-        const unit = el.querySelector('.unit');
         el.firstChild.textContent = val;
         if(t<1) requestAnimationFrame(tick);
         else el.firstChild.textContent = isFloat ? target.toFixed(1) : target;
       }
       requestAnimationFrame(tick);
     });
-  })();
+  }
 
-  /* ====== DNA helix generation ====== */
+  /* ====== Ambient Pac-Man field ======
+     A subtle, fixed background. Dots are laid out as straight corridors with
+     sharp corners (no maze border). Pac-Man pathfinds (BFS) to the nearest
+     remaining dot; the ghost pathfinds to Pac-Man. Eaten dots fade back in
+     after a while. If the ghost catches Pac-Man, Pac-Man vanishes for 5s and
+     respawns at its start; the ghost holds still while Pac-Man is gone. */
   (function(){
-    const svg = document.querySelector('.helix svg g');
-    if(!svg) return;
-    const W = 200, H = 300, steps = 22;
-    let html = '';
-    for(let i=0;i<steps;i++){
-      const t = i/(steps-1);
-      const y = 10 + t*(H-20);
-      const phase = t*Math.PI*4;
-      const x1 = 100 + Math.sin(phase)*44;
-      const x2 = 100 + Math.sin(phase+Math.PI)*44;
-      // rung
-      html += `<line class="rung" x1="${x1}" y1="${y}" x2="${x2}" y2="${y}" opacity="${0.25 + 0.5*Math.abs(Math.cos(phase))}"/>`;
-      html += `<circle class="node" cx="${x1}" cy="${y}" r="2.6"/>`;
-      html += `<circle class="node alt" cx="${x2}" cy="${y}" r="2.6"/>`;
+    const canvas = document.getElementById('pac-canvas');
+    if(!canvas || !canvas.getContext) return;
+    const ctx = canvas.getContext('2d');
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    const CELL = 34;          // px per grid cell
+    const PAC_SPEED  = 3.4;   // cells / second
+    const GHOST_SPEED = 3.0;
+    const DIRS = [[1,0],[-1,0],[0,1],[0,-1]];
+    const key = (x,y)=> x+','+y;
+
+    let W, H, cols, rows, offX, offY, dpr;
+    let open, graph, dots, pac, ghost, startCell;
+    let last = 0, accel = 0;
+
+    function inGrid(x,y){ return x>=0 && y>=0 && x<cols && y<rows; }
+
+    // Build connected corridors via branching random walks → lines + corners.
+    function buildMaze(){
+      open = new Set();
+      const cx = Math.floor(cols/2), cy = Math.floor(rows/2);
+      open.add(key(cx,cy));
+      const cells = [[cx,cy]];
+      const walks = Math.max(10, Math.floor((cols*rows)/90));
+      for(let w=0; w<walks; w++){
+        const [sx,sy] = cells[(Math.random()*cells.length)|0];
+        let x=sx, y=sy;
+        const d = DIRS[(Math.random()*4)|0];
+        const len = 3 + (Math.random()*7|0);
+        for(let i=0;i<len;i++){
+          x+=d[0]; y+=d[1];
+          if(!inGrid(x,y)) break;
+          const k = key(x,y);
+          if(!open.has(k)){ open.add(k); cells.push([x,y]); }
+        }
+      }
+      // Adjacency graph over open cells.
+      graph = new Map();
+      open.forEach(k=>{
+        const [x,y] = k.split(',').map(Number);
+        const nb = [];
+        DIRS.forEach(d=>{ const nk = key(x+d[0],y+d[1]); if(open.has(nk)) nb.push(nk); });
+        graph.set(k, nb);
+      });
+      // Dots on every open cell.
+      dots = new Map();
+      open.forEach(k=> dots.set(k, {eaten:false, respawnAt:0, fade:1}));
+      // Start cells: a connected cell for Pac-Man, the farthest one for the ghost.
+      const arr = [...open].filter(k=> graph.get(k).length>0);
+      startCell = arr[0] || [...open][0];
+      const sp = startCell.split(',').map(Number);
+      let far = startCell, best = -1;
+      arr.forEach(k=>{
+        const p = k.split(',').map(Number);
+        const dd = Math.abs(p[0]-sp[0]) + Math.abs(p[1]-sp[1]);
+        if(dd>best){ best = dd; far = k; }
+      });
+      pac   = mover(startCell);
+      ghost = mover(far);
+      pac.dead = false; pac.deadUntil = 0;
     }
-    svg.innerHTML = html;
+
+    function mover(cell){ return {cell, from:cell, to:cell, t:1, dir:[1,0]}; }
+
+    // BFS — returns the first neighbour of `start` on the shortest path to any
+    // cell matching isGoal(), or null if none reachable.
+    function bfsStep(start, isGoal){
+      const prev = new Map(); prev.set(start, null);
+      const q = [start]; let goal = null;
+      while(q.length){
+        const c = q.shift();
+        if(c!==start && isGoal(c)){ goal = c; break; }
+        const nbs = graph.get(c) || [];
+        for(const n of nbs){ if(!prev.has(n)){ prev.set(n, c); q.push(n); } }
+      }
+      if(goal===null) return null;
+      let cur = goal, p = prev.get(cur);
+      while(p!==null && p!==start){ cur = p; p = prev.get(cur); }
+      return p===null ? null : cur;
+    }
+
+    function chooseNext(m){
+      let step = null;
+      if(m===pac){
+        step = bfsStep(pac.cell, c=>{ const d = dots.get(c); return d && !d.eaten; });
+        if(!step){ const nb = graph.get(pac.cell); step = nb.length ? nb[(Math.random()*nb.length)|0] : null; }
+      } else {
+        step = bfsStep(ghost.cell, c=> c===pac.cell);
+      }
+      if(step){
+        const f = m.cell.split(',').map(Number), t = step.split(',').map(Number);
+        m.from = m.cell; m.to = step; m.t = 0; m.dir = [t[0]-f[0], t[1]-f[1]];
+      } else { m.to = m.cell; m.t = 1; }
+    }
+
+    function arrive(m){
+      m.cell = m.to;
+      if(m===pac){
+        const d = dots.get(pac.cell);
+        if(d && !d.eaten){ d.eaten = true; d.fade = 0; d.respawnAt = performance.now() + 6000 + Math.random()*9000; }
+      }
+    }
+
+    function step(m, speed, dt){
+      if(m.t < 1 && m.to !== m.cell){
+        m.t += speed*dt;
+        if(m.t >= 1){ m.t = 1; arrive(m); }
+      } else { chooseNext(m); }
+    }
+
+    function pos(m){
+      const f = m.from.split(',').map(Number), t = m.to.split(',').map(Number);
+      const x = (f[0] + (t[0]-f[0])*m.t)*CELL + CELL/2 + offX;
+      const y = (f[1] + (t[1]-f[1])*m.t)*CELL + CELL/2 + offY;
+      return {x, y};
+    }
+
+    function update(now, dt){
+      // Dot respawn + fade-in.
+      dots.forEach(d=>{
+        if(d.eaten && now >= d.respawnAt){ d.eaten = false; d.fade = 0; }
+        if(!d.eaten && d.fade < 1){ d.fade = Math.min(1, d.fade + dt*1.1); }
+      });
+      if(pac.dead){
+        if(now >= pac.deadUntil){ pac.dead = false; pac.cell = startCell; pac.from = startCell; pac.to = startCell; pac.t = 1; }
+      } else {
+        step(pac, PAC_SPEED, dt);
+        step(ghost, GHOST_SPEED, dt);   // ghost only moves while Pac-Man exists
+        const pp = pos(pac), gp = pos(ghost);
+        if(Math.hypot(pp.x-gp.x, pp.y-gp.y) < CELL*0.55){ pac.dead = true; pac.deadUntil = now + 5000; }
+      }
+    }
+
+    function drawGhost(p, now){
+      const r = CELL*0.42;
+      ctx.save();
+      ctx.globalAlpha = 0.8;
+      ctx.fillStyle = '#00A9E0';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, Math.PI, 0);            // dome
+      const baseY = p.y + r, feet = 4, wob = (Math.sin(now/180)*1.5);
+      ctx.lineTo(p.x + r, baseY + wob);
+      for(let i=0;i<feet;i++){
+        const x0 = p.x + r - (i*2+1)*(r/feet);
+        const x1 = p.x + r - (i*2+2)*(r/feet);
+        ctx.quadraticCurveTo((x0+x1)/2, baseY - 5 + wob, x1, baseY + wob);
+      }
+      ctx.closePath(); ctx.fill();
+      // eyes look toward movement
+      ctx.fillStyle = '#fff';
+      const ex = r*0.38, ey = -r*0.12, er = r*0.26;
+      ctx.beginPath(); ctx.arc(p.x-ex, p.y+ey, er, 0, 7); ctx.arc(p.x+ex, p.y+ey, er, 0, 7); ctx.fill();
+      ctx.fillStyle = '#02201a';
+      const dx = ghost.dir[0]*er*0.5, dy = ghost.dir[1]*er*0.5;
+      ctx.beginPath(); ctx.arc(p.x-ex+dx, p.y+ey+dy, er*0.5, 0, 7); ctx.arc(p.x+ex+dx, p.y+ey+dy, er*0.5, 0, 7); ctx.fill();
+      ctx.restore();
+    }
+
+    function drawPac(p, now){
+      const r = CELL*0.44;
+      const ang = Math.atan2(pac.dir[1], pac.dir[0]);
+      const chomp = Math.abs(Math.sin(now/110)) * 0.32 * Math.PI;
+      ctx.save();
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = '#e9d66b';
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.arc(p.x, p.y, r, ang + chomp, ang + 2*Math.PI - chomp);
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+
+    function render(now){
+      ctx.clearRect(0,0,W,H);
+      // dots
+      ctx.fillStyle = '#91D6AC';
+      dots.forEach((d,k)=>{
+        if(d.eaten) return;
+        const [gx,gy] = k.split(',').map(Number);
+        ctx.globalAlpha = 0.30 * d.fade;
+        ctx.beginPath();
+        ctx.arc(gx*CELL + CELL/2 + offX, gy*CELL + CELL/2 + offY, 2.2, 0, 7);
+        ctx.fill();
+      });
+      ctx.globalAlpha = 1;
+      drawGhost(pos(ghost), now);
+      if(!pac.dead) drawPac(pos(pac), now);
+    }
+
+    function frame(now){
+      const dt = Math.min(0.05, (now - last)/1000 || 0);
+      last = now;
+      update(now, dt);
+      render(now);
+      requestAnimationFrame(frame);
+    }
+
+    function resize(){
+      dpr = Math.min(2, window.devicePixelRatio || 1);
+      W = window.innerWidth; H = window.innerHeight;
+      cols = Math.max(8, Math.floor(W/CELL));
+      rows = Math.max(8, Math.floor(H/CELL));
+      offX = (W - cols*CELL)/2;
+      offY = (H - rows*CELL)/2;
+      canvas.width = W*dpr; canvas.height = H*dpr;
+      canvas.style.width = W+'px'; canvas.style.height = H+'px';
+      ctx.setTransform(dpr,0,0,dpr,0,0);
+      buildMaze();
+    }
+
+    let rt;
+    window.addEventListener('resize', ()=>{ clearTimeout(rt); rt = setTimeout(resize, 200); });
+    resize();
+
+    if(reduce){ render(performance.now()); return; }   // static frame, no motion
+    requestAnimationFrame(frame);
   })();
 
   /* ====== View toggle (Person / Work / Portfolio) ====== */
@@ -134,6 +338,7 @@
         });
         document.querySelectorAll('.tagline').forEach(t=>t.classList.toggle('active', t.dataset.view===view));
         views.forEach(v=>body.classList.toggle('view-'+v, v===view));
+        if(view==='work') runCounters();
       });
     });
   })();
@@ -224,29 +429,23 @@
     ];
     stack.sort((a,b)=>a.n.localeCompare(b.n));
     const el = document.getElementById('stack');
-    const empty = document.createElement('div');
-    empty.className = 'stack-empty';
-    empty.textContent = '// select a category to view items';
-    el.appendChild(empty);
-    stack.forEach((s,i)=>{
+    stack.forEach(s=>{
       const d = document.createElement('span');
-      d.className = 'chip hidden';
+      d.className = 'chip';
       d.dataset.cats = s.c.join(' ');
       d.textContent = s.n;
-      d.style.animationDelay = (i*0.012) + 's';
       el.appendChild(d);
     });
-    // Filter handling — start empty; "All" shows everything, category shows only matches
+    // Filter handling — every chip is always visible; "All" clears highlights,
+    // a category outlines its matches instead of hiding the rest.
     document.querySelectorAll('.filter').forEach(btn=>{
       btn.addEventListener('click', ()=>{
         document.querySelectorAll('.filter').forEach(b=>b.classList.remove('active'));
         btn.classList.add('active');
         const cat = btn.dataset.cat;
-        empty.style.display = 'none';
         document.querySelectorAll('#stack .chip').forEach(chip=>{
           const cats = chip.dataset.cats.split(' ');
-          const show = cat==='all' || cats.includes(cat);
-          chip.classList.toggle('hidden', !show);
+          chip.classList.toggle('highlighted', cat!=='all' && cats.includes(cat));
         });
       });
     });
