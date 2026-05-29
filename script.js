@@ -116,10 +116,14 @@
     const GHOST_SPEED = 1.9;  // much slower so Pac-Man can actually escape
     const DIRS = [[1,0],[-1,0],[0,1],[0,-1]];
     const key = (x,y)=> x+','+y;
+    const PAC_ALPHA = 0.4, GHOST_ALPHA = 0.3, DOT_ALPHA = 0.18;
+    const FADE_SPEED = 2.5;   // opacity units / second for spawn/death fades
+    const RELEASE_MS = 60000; // release another ghost each uncaught minute
+    const MAX_GHOSTS = 4;
 
     let W, H, cols, rows, offX, offY, dpr;
-    let open, graph, dots, pac, ghost, startCell;
-    let last = 0, accel = 0;
+    let open, graph, dots, pac, ghosts, nestCells, nextRelease, startCell;
+    let last = 0;
 
     function inGrid(x,y){ return x>=0 && y>=0 && x<cols && y<rows; }
 
@@ -214,16 +218,30 @@
       dots = new Map();
       open.forEach(k=>{ if(!noDot.has(k)) dots.set(k, {eaten:false, respawnAt:0, fade:1}); });
 
-      // Ghost starts at the bottom of the page.
-      let far = startCell, by = -1;
-      open.forEach(k=>{ const y = +k.split(',')[1]; if(y>by){ by = y; far = k; } });
+      // Ghost nests at the bottom of the page (up to MAX_GHOSTS, spread out).
+      const byBottom = [...open].sort((a,b)=>{
+        const ya=+a.split(',')[1], yb=+b.split(',')[1];
+        return yb-ya || (+a.split(',')[0]) - (+b.split(',')[0]);
+      });
+      nestCells = [];
+      for(const k of byBottom){
+        if(nestCells.length>=MAX_GHOSTS) break;
+        const x = +k.split(',')[0];
+        if(nestCells.every(n=> Math.abs((+n.split(',')[0]) - x) >= 3)) nestCells.push(k);
+      }
+      if(!nestCells.length) nestCells = [byBottom[0]];
 
       pac = mover(startCell); pac.dir = [1,0];
-      ghost = mover(far);
-      pac.dead = false; pac.deadUntil = 0;
+      pac.fade = 1; pac.fadeTarget = 1; pac.dead = false; pac.deadUntil = 0;
+
+      // Start with a single ghost; more are released over time.
+      ghosts = [ makeGhost(nestCells[0]) ];
+      nextRelease = performance.now() + RELEASE_MS;
     }
 
     function mover(cell){ return {cell, from:cell, to:cell, t:1, dir:[1,0]}; }
+    function makeGhost(cell){ const m = mover(cell); m.fade = 0; m.fadeTarget = 1; m.nest = cell; m.respawn = false; return m; }
+    function approach(v, target, dt){ const s = FADE_SPEED*dt; return v<target ? Math.min(target, v+s) : v>target ? Math.max(target, v-s) : v; }
 
     // BFS — returns the first neighbour of `start` on the shortest path to any
     // cell matching isGoal(), or null if none reachable.
@@ -253,7 +271,7 @@
         step = bfsStep(pac.cell, c=>{ const d = dots.get(c); return d && !d.eaten; });
         if(!step){ const nb = graph.get(pac.cell); step = nb.length ? nb[(Math.random()*nb.length)|0] : null; }
       } else {
-        step = bfsStep(ghost.cell, c=> c===pac.cell);
+        step = bfsStep(m.cell, c=> c===pac.cell);
       }
       if(!step){ m.to = m.cell; m.t = 1; return; }
       const f = m.cell.split(',').map(Number), t = step.split(',').map(Number);
@@ -279,27 +297,60 @@
       return {x, y};
     }
 
+    function catchPac(now){
+      pac.dead = true; pac.deadUntil = now + 5000; pac.fadeTarget = 0;
+      // Every ghost fades out and respawns back at its nest.
+      ghosts.forEach(g=>{ g.fadeTarget = 0; g.respawn = true; });
+    }
+
     function update(now, dt){
       // Dot respawn + fade-in.
       dots.forEach(d=>{
         if(d.eaten && now >= d.respawnAt){ d.eaten = false; d.fade = 0; }
         if(!d.eaten && d.fade < 1){ d.fade = Math.min(1, d.fade + dt*1.1); }
       });
+
+      // Pac-Man + ghost opacity fades.
+      pac.fade = approach(pac.fade, pac.fadeTarget, dt);
+      ghosts.forEach(g=>{
+        g.fade = approach(g.fade, g.fadeTarget, dt);
+        if(g.respawn && g.fade <= 0.02){      // once faded out, reappear at the nest
+          g.cell = g.nest; g.from = g.nest; g.to = g.nest; g.t = 1;
+          g.respawn = false; g.fadeTarget = 1;
+        }
+      });
+
       if(pac.dead){
-        if(now >= pac.deadUntil){ pac.dead = false; pac.cell = startCell; pac.from = startCell; pac.to = startCell; pac.t = 1; }
-      } else {
-        step(pac, PAC_SPEED, dt);
-        step(ghost, GHOST_SPEED, dt);   // ghost only moves while Pac-Man exists
-        const pp = pos(pac), gp = pos(ghost);
-        if(Math.hypot(pp.x-gp.x, pp.y-gp.y) < CELL*0.55){ pac.dead = true; pac.deadUntil = now + 5000; }
+        // Ghosts hold at their nests until Pac-Man comes back.
+        if(now >= pac.deadUntil){
+          pac.dead = false; pac.cell = startCell; pac.from = startCell; pac.to = startCell; pac.t = 1;
+          pac.fadeTarget = 1; nextRelease = now + RELEASE_MS;   // reset the uncaught timer
+        }
+        return;
+      }
+
+      step(pac, PAC_SPEED, dt);
+
+      // Release another ghost for each uncaught minute, up to MAX_GHOSTS.
+      if(ghosts.length < MAX_GHOSTS && now >= nextRelease){
+        ghosts.push(makeGhost(nestCells[ghosts.length % nestCells.length]));
+        nextRelease = now + RELEASE_MS;
+      }
+
+      const pp = pos(pac);
+      ghosts.forEach(g=> step(g, GHOST_SPEED, dt));
+      for(const g of ghosts){
+        if(g.fade < 0.6) continue;            // ignore ghosts mid fade-in/out
+        const gp = pos(g);
+        if(Math.hypot(pp.x-gp.x, pp.y-gp.y) < CELL*0.55){ catchPac(now); break; }
       }
     }
 
-    function drawGhost(p, now){
+    function drawGhost(g, p, now){
       const r = CELL*0.40;
       ctx.save();
-      ctx.globalAlpha = 0.40;
-      ctx.fillStyle = '#00A9E0';
+      ctx.globalAlpha = GHOST_ALPHA * g.fade;
+      ctx.fillStyle = '#e8f0eb';                   // white
       ctx.beginPath();
       ctx.arc(p.x, p.y, r, Math.PI, 0);            // dome
       const baseY = p.y + r, feet = 4, wob = (Math.sin(now/180)*1.5);
@@ -310,13 +361,11 @@
         ctx.quadraticCurveTo((x0+x1)/2, baseY - 5 + wob, x1, baseY + wob);
       }
       ctx.closePath(); ctx.fill();
-      // eyes look toward movement
-      ctx.fillStyle = '#fff';
-      const ex = r*0.38, ey = -r*0.12, er = r*0.26;
-      ctx.beginPath(); ctx.arc(p.x-ex, p.y+ey, er, 0, 7); ctx.arc(p.x+ex, p.y+ey, er, 0, 7); ctx.fill();
-      ctx.fillStyle = '#02201a';
-      const dx = ghost.dir[0]*er*0.5, dy = ghost.dir[1]*er*0.5;
-      ctx.beginPath(); ctx.arc(p.x-ex+dx, p.y+ey+dy, er*0.5, 0, 7); ctx.arc(p.x+ex+dx, p.y+ey+dy, er*0.5, 0, 7); ctx.fill();
+      // dark eyes looking toward movement (readable on the white body)
+      const ex = r*0.36, ey = -r*0.10, er = r*0.30;
+      ctx.fillStyle = '#06241d';
+      const dx = g.dir[0]*er*0.45, dy = g.dir[1]*er*0.45;
+      ctx.beginPath(); ctx.arc(p.x-ex+dx, p.y+ey+dy, er*0.6, 0, 7); ctx.arc(p.x+ex+dx, p.y+ey+dy, er*0.6, 0, 7); ctx.fill();
       ctx.restore();
     }
 
@@ -325,7 +374,7 @@
       const ang = Math.atan2(pac.dir[1], pac.dir[0]);
       const chomp = Math.abs(Math.sin(now/110)) * 0.32 * Math.PI;
       ctx.save();
-      ctx.globalAlpha = 0.5;
+      ctx.globalAlpha = PAC_ALPHA * pac.fade;
       ctx.fillStyle = '#91D6AC';
       ctx.beginPath();
       ctx.moveTo(p.x, p.y);
@@ -341,14 +390,14 @@
       dots.forEach((d,k)=>{
         if(d.eaten) return;
         const [gx,gy] = k.split(',').map(Number);
-        ctx.globalAlpha = 0.24 * d.fade;
+        ctx.globalAlpha = DOT_ALPHA * d.fade;
         ctx.beginPath();
         ctx.arc(gx*CELL + CELL/2 + offX, gy*CELL + CELL/2 + offY, 2.2, 0, 7);
         ctx.fill();
       });
       ctx.globalAlpha = 1;
-      drawGhost(pos(ghost), now);
-      if(!pac.dead) drawPac(pos(pac), now);
+      ghosts.forEach(g=>{ if(g.fade > 0.01) drawGhost(g, pos(g), now); });
+      if(pac.fade > 0.01) drawPac(pos(pac), now);
     }
 
     function frame(now){
@@ -382,13 +431,13 @@
       const mo = new MutationObserver(()=>{
         if(document.body.classList.contains('unlocked')){
           mo.disconnect(); resize();
-          if(reduce) render(performance.now());
+          if(reduce){ ghosts.forEach(g=>g.fade=1); render(performance.now()); }
         }
       });
       mo.observe(document.body, {attributes:true, attributeFilter:['class']});
     }
 
-    if(reduce){ render(performance.now()); return; }   // static frame, no motion
+    if(reduce){ ghosts.forEach(g=>g.fade=1); render(performance.now()); return; }   // static frame
     requestAnimationFrame(frame);
   })();
 
